@@ -1,0 +1,222 @@
+bert_model:
+  model_id: sentence-transformers/all-MiniLM-L12-v2
+  threshold: 0.6
+  use_cpu: true
+vllm_endpoints:
+- name: llama_cpp_local
+  address: 127.0.0.1
+  port: 8080
+  models:
+  - qwen3-30b-a3b
+  weight: 1
+- name: gemini_openai
+  address: generativelanguage.googleapis.com
+  port: 443
+  protocol: https
+  base_path: /v1beta/openai
+  models:
+  - gemini-2.5-pro
+  weight: 1
+  api_key_env: GEMINI_API_KEY
+model_config:
+  qwen3-30b-a3b:
+    preferred_endpoints:
+    - llama_cpp_local
+    pii_policy:
+      allow_by_default: true
+      pii_types_allowed:
+      - EMAIL_ADDRESS
+      - PERSON
+  gemini-2.5-pro:
+    preferred_endpoints:
+    - gemini_openai
+    pii_policy:
+      allow_by_default: true
+categories:
+- name: financial_analysis
+- name: evaluation
+- name: data_generation
+- name: general
+signals:
+  keywords:
+  - name: financial_keywords
+    operator: OR
+    keywords:
+    - stock
+    - price
+    - ticker
+    - PE ratio
+    - market cap
+    - dividend
+    - revenue
+    - earnings
+    - balance sheet
+    - income statement
+    - cash flow
+    - financial
+    - portfolio
+    - investment
+    - trading
+    - shares
+    - fundamentals
+    - analyst
+    - recommendation
+    case_sensitive: false
+  - name: company_keywords
+    operator: OR
+    keywords:
+    - AAPL
+    - MSFT
+    - GOOGL
+    - AMZN
+    - NVDA
+    - TSLA
+    - META
+    - JPM
+    - V
+    - WMT
+    - Apple
+    - Microsoft
+    - Google
+    - Amazon
+    - Tesla
+    - Nvidia
+    case_sensitive: false
+  - name: evaluation_keywords
+    operator: OR
+    keywords:
+    - evaluate
+    - judge
+    - critique
+    - review
+    - assess
+    - score
+    - rate
+    - correctness
+    - accuracy
+    - quality
+    - benchmark
+    - grading
+    - validation
+    - is correct
+    - check response
+    - verify answer
+    case_sensitive: false
+  - name: generation_keywords
+    operator: OR
+    keywords:
+    - generate
+    - create synthetic
+    - dataset
+    - test case
+    - benchmark question
+    - sample query
+    - example question
+    - diverse
+    - variation
+    - synthetic data
+    case_sensitive: false
+  embeddings:
+  - name: stock_analysis_intent
+    threshold: 0.7
+    candidates:
+    - analyze stock performance
+    - get financial data for company
+    - what is the PE ratio
+    - show me the balance sheet
+    aggregation_method: max
+  - name: evaluation_intent
+    threshold: 0.75
+    candidates:
+    - evaluate this response for correctness
+    - judge the quality of this answer
+    - score this financial analysis
+    - assess the accuracy of the response
+    aggregation_method: max
+  - name: generation_intent
+    threshold: 0.75
+    candidates:
+    - generate synthetic test questions
+    - create benchmark dataset
+    - produce diverse query examples
+    aggregation_method: max
+decisions:
+- name: financial_analysis
+  description: Route financial analysis and market data queries to local Qwen model
+  priority: 10
+  rules:
+    operator: OR
+    conditions:
+    - type: keyword
+      name: financial_keywords
+    - type: keyword
+      name: company_keywords
+    - type: embedding
+      name: stock_analysis_intent
+  modelRefs:
+  - model: qwen3-30b-a3b
+    use_reasoning: true
+  plugins:
+  - type: system_prompt
+    configuration:
+      enabled: true
+      prompt: You are a financial analysis expert. Provide accurate, data-driven insights
+        about stocks, markets, and financial metrics.
+- name: evaluation
+  description: Route evaluation and LLM-as-a-Judge tasks to Gemini 2.5 Pro
+  priority: 15
+  rules:
+    operator: OR
+    conditions:
+    - type: keyword
+      name: evaluation_keywords
+    - type: embedding
+      name: evaluation_intent
+  modelRefs:
+  - model: gemini-2.5-pro
+    use_reasoning: true
+  plugins:
+  - type: system_prompt
+    configuration:
+      enabled: true
+      prompt: You are an expert evaluator. Assess responses for correctness, completeness,
+        and quality. Provide structured JSON feedback.
+- name: data_generation
+  description: Route synthetic data generation to Gemini 2.5 Pro
+  priority: 15
+  rules:
+    operator: OR
+    conditions:
+    - type: keyword
+      name: generation_keywords
+    - type: embedding
+      name: generation_intent
+  modelRefs:
+  - model: gemini-2.5-pro
+    use_reasoning: false
+  plugins:
+  - type: system_prompt
+    configuration:
+      enabled: true
+      prompt: You are a dataset generator. Create diverse, realistic test queries
+        for financial AI agents.
+- name: general
+  description: Route general queries to local Qwen model
+  priority: 5
+  rules:
+    operator: OR
+    conditions:
+    - type: domain
+      name: general
+  modelRefs:
+  - model: qwen3-30b-a3b
+    use_reasoning: false
+default_model: qwen3-30b-a3b
+semantic_cache:
+  enabled: false
+  backend_type: memory
+  similarity_threshold: 0.8
+prompt_guard:
+  enabled: false
+  threshold: 0.7
+  use_cpu: true
