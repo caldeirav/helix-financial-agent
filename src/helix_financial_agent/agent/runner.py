@@ -233,7 +233,8 @@ class AgentRunner:
             self.tool_selector = ToolSelector()
             # Register tools
             for tool in self.all_tools:
-                name = getattr(tool, "name", tool.__name__)
+                # Handle both regular functions and LangChain StructuredTool objects
+                name = getattr(tool, "name", None) or getattr(tool, "__name__", str(tool))
                 self.tool_selector.register_tool(name, tool)
         else:
             self.tool_selector = None
@@ -314,7 +315,7 @@ class AgentRunner:
             console.print("─" * 70)
         
         selected_tools = self._select_tools(query)
-        selected_tool_names = [getattr(t, "name", t.__name__) for t in selected_tools]
+        selected_tool_names = [getattr(t, "name", None) or getattr(t, "__name__", str(t)) for t in selected_tools]
         
         trace_log.append({
             "timestamp": time.time(),
@@ -590,10 +591,10 @@ class AgentRunner:
             "revise": "✏️",
         }
         node_descriptions = {
-            "generator": "Agent Thinking (via Router → Qwen3)",
+            "generator": "Agent Thinking",
             "tools": "Tool Execution (via MCP Server)",
-            "reflect": "Quality Check (via Router → Gemini)",
-            "revise": "Response Revision (via Router → Qwen3)",
+            "reflect": "Quality Check",
+            "revise": "Response Revision",
         }
         icon = node_icons.get(node_name, "📍")
         desc = node_descriptions.get(node_name, node_name)
@@ -603,13 +604,17 @@ class AgentRunner:
         console.print(f"│ {icon} [bold]Step {step}: {desc}[/bold]")
         console.print(f"└{'─' * 68}┘")
         
-        # Process messages
+        # Process messages and extract routing info
         if "messages" in node_state:
             for msg in node_state["messages"]:
-                self._print_message(msg)
+                self._print_message(msg, node_name=node_name)
     
-    def _print_message(self, msg) -> None:
-        """Print a message with appropriate formatting."""
+    def _print_message(self, msg, node_name: str = None) -> None:
+        """Print a message with appropriate formatting including routing info."""
+        # Extract and display routing metadata from AIMessage
+        if isinstance(msg, AIMessage):
+            self._print_routing_info(msg, node_name)
+        
         if hasattr(msg, 'tool_calls') and msg.tool_calls:
             console.print("\n[bold magenta]🔧 TOOL CALLS (via MCP):[/bold magenta]")
             for tc in msg.tool_calls:
@@ -652,6 +657,49 @@ class AgentRunner:
                     border_style="blue",
                     padding=(1, 2)
                 ))
+    
+    def _print_routing_info(self, msg: AIMessage, node_name: str = None) -> None:
+        """Print routing/model selection information from AIMessage metadata."""
+        # Get response metadata from LangChain AIMessage
+        response_metadata = getattr(msg, 'response_metadata', {}) or {}
+        
+        # Extract model info from response metadata
+        model_name = response_metadata.get('model_name') or response_metadata.get('model', '')
+        
+        # Check for routing metadata (if router includes it)
+        routing_meta = response_metadata.get('routing_metadata', {})
+        
+        # Determine the expected model based on node type
+        expected_models = {
+            "generator": ("qwen3", "Qwen3-30B-A3B", "Financial Analysis"),
+            "reflect": ("gemini", "Gemini 2.5 Pro", "Quality Evaluation"),
+            "revise": ("qwen3", "Qwen3-30B-A3B", "Response Revision"),
+        }
+        
+        if node_name in expected_models:
+            expected_prefix, expected_display, purpose = expected_models[node_name]
+            
+            console.print(f"\n[bold cyan]🔀 ROUTING DECISION:[/bold cyan]")
+            console.print(f"   ├─ Purpose: [white]{purpose}[/white]")
+            console.print(f"   ├─ Request Model: [yellow]MoM[/yellow] (Model of Models - auto-select)")
+            
+            # Show actual model used if available
+            if model_name:
+                # Determine if routing was correct
+                model_lower = model_name.lower()
+                if expected_prefix in model_lower or expected_display.lower() in model_lower:
+                    console.print(f"   ├─ Routed To: [green]{model_name}[/green] ✓")
+                    console.print(f"   └─ Rationale: [dim]Semantic router detected {purpose.lower()} intent[/dim]")
+                else:
+                    console.print(f"   ├─ Routed To: [yellow]{model_name}[/yellow]")
+                    console.print(f"   └─ Expected: [dim]{expected_display}[/dim]")
+            else:
+                console.print(f"   ├─ Expected Model: [cyan]{expected_display}[/cyan]")
+                console.print(f"   └─ Rationale: [dim]Router auto-selects based on prompt content[/dim]")
+            
+            # Show confidence if available
+            if routing_meta.get('confidence'):
+                console.print(f"   │  Confidence: {routing_meta['confidence']:.2%}")
     
     def _print_summary(self, result: Dict) -> None:
         """Print comprehensive execution summary."""

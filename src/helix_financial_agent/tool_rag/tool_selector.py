@@ -59,24 +59,29 @@ class ToolSelector:
         top_k: Optional[int] = None,
         threshold: Optional[float] = None,
         verbose: bool = False,
+        show_all_tools: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         Select relevant tools for a query.
         
         Args:
             query: The user's query
-            top_k: Number of tools to retrieve (default from config)
+            top_k: Number of tools to retrieve (default from config, or all if show_all_tools=True)
             threshold: Minimum similarity threshold (default from config)
             verbose: Whether to print selection details
+            show_all_tools: If True, search and display all tools (not just top_k)
             
         Returns:
             List of selected tool info dicts
         """
-        top_k = top_k or self.top_k
         threshold = threshold or self.threshold
         
+        # Search for ALL tools if show_all_tools is True, otherwise use top_k
+        total_tools = len(self.tool_store._tools)
+        search_k = total_tools if show_all_tools else (top_k or self.top_k)
+        
         # Search for relevant tools
-        matches = self.tool_store.search(query, top_k=top_k)
+        matches = self.tool_store.search(query, top_k=search_k)
         
         # Filter by threshold
         selected = [m for m in matches if m["similarity"] >= threshold]
@@ -182,12 +187,14 @@ class ToolSelector:
         console.print("┃" + " " * 25 + "[bold cyan]🎯 TOOLRAG SELECTION DETAILS[/bold cyan]" + " " * 24 + "┃")
         console.print("┗" + "━" * 78 + "┛")
         
+        total_tools = len(self.tool_store._tools)
+        
         # Configuration section
         console.print("\n[bold yellow]📋 CONFIGURATION[/bold yellow]")
         console.print(f"   Embedding Model: [cyan]{self.config.tool_rag.embedding_model}[/cyan]")
-        console.print(f"   Top-K Retrieved: [cyan]{self.top_k}[/cyan]")
         console.print(f"   Similarity Threshold: [cyan]{threshold}[/cyan]")
-        console.print(f"   Total Tools in Store: [cyan]{len(self.tool_store._tools)}[/cyan]")
+        console.print(f"   Total Tools in Store: [cyan]{total_tools}[/cyan]")
+        console.print(f"   Searching: [cyan]ALL {total_tools} tools[/cyan] (ranked by similarity)")
         
         # Query section
         console.print("\n[bold yellow]🔍 QUERY ANALYSIS[/bold yellow]")
@@ -195,8 +202,8 @@ class ToolSelector:
         console.print(f"   Query Length: [dim]{len(query)} characters[/dim]")
         
         # Search results section
-        console.print("\n[bold yellow]📊 SEMANTIC SEARCH RESULTS[/bold yellow]")
-        console.print(f"   Retrieved {len(all_matches)} candidate tools from vector DB\n")
+        console.print("\n[bold yellow]📊 SEMANTIC SEARCH RESULTS (ALL TOOLS RANKED)[/bold yellow]")
+        console.print(f"   Comparing query against all {len(all_matches)} tools in vector DB\n")
         
         # Detailed results for each tool
         for i, match in enumerate(all_matches, 1):
@@ -280,7 +287,8 @@ def create_tool_selector_with_langchain_tools(tools: List[Callable]) -> ToolSele
     selector = ToolSelector()
     
     for tool in tools:
-        name = getattr(tool, "name", tool.__name__)
+        # Handle both regular functions and LangChain StructuredTool objects
+        name = getattr(tool, "name", None) or getattr(tool, "__name__", str(tool))
         selector.register_tool(name, tool)
     
     return selector
