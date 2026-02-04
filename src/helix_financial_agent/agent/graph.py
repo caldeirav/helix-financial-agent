@@ -50,6 +50,22 @@ def should_use_tools(state: AgentState) -> Literal["tools", "reflect"]:
     return "reflect"
 
 
+def after_tools(state: AgentState) -> Literal["generator", "reflect"]:
+    """
+    Router after tools: check where to go based on context.
+    
+    If we're in revision mode (iteration_count > 0), go directly to reflect.
+    If we're in initial generation mode, go back to generator to process results.
+    """
+    # If we're in a revision cycle, go directly to reflect
+    # (don't go back through generator which would make more tool calls)
+    if state.get("iteration_count", 0) > 0:
+        return "reflect"
+    
+    # Initial generation - go back to generator to process tool results
+    return "generator"
+
+
 def after_reflection(state: AgentState) -> Literal["revise", "end"]:
     """
     Router after reflection: decide whether to revise or finish.
@@ -161,8 +177,15 @@ def build_reflexive_agent(
         }
     )
     
-    # Tools always go back to generator (to process tool results)
-    workflow.add_edge("tools", "generator")
+    # Tools route based on context (initial vs revision)
+    workflow.add_conditional_edges(
+        "tools",
+        after_tools,
+        {
+            "generator": "generator",  # Initial generation - process tool results
+            "reflect": "reflect",       # Revision mode - go directly to reflection
+        }
+    )
     
     # Add conditional edges from reflector
     workflow.add_conditional_edges(
