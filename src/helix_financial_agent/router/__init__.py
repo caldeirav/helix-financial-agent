@@ -10,7 +10,7 @@ Architecture:
 
 vLLM-SR Ports:
 - 8801: HTTP entry point through Envoy (POST /v1/chat/completions)
-- 8080: Classification API (GET /v1/models, GET /health)
+- 8889: Classification API (GET /v1/models, GET /health)
 - 9190: Prometheus metrics (GET /metrics)
 
 See: https://vllm-semantic-router.com/docs/api/router/

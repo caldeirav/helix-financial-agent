@@ -2,6 +2,11 @@
 Agent Graph Construction
 
 Builds the LangGraph workflow for the Reflexive Financial Agent.
+
+Architecture:
+    - All LLM calls go through the vLLM Semantic Router (mandatory)
+    - All tool calls go through the MCP server (mandatory)
+    - Router handles model selection: Qwen3 for agent, Gemini for judge
 """
 
 from typing import Literal, Optional, List, Callable
@@ -81,7 +86,6 @@ def after_revision(state: AgentState) -> Literal["tools", "reflect"]:
 
 def build_reflexive_agent(
     tools: Optional[List[Callable]] = None,
-    use_router: bool = False,
 ) -> StateGraph:
     """
     Construct the LangGraph workflow for the Reflexive Financial Agent.
@@ -116,9 +120,13 @@ def build_reflexive_agent(
        │
        └──────────────► (back to generator for tool response handling)
     
+    Architecture:
+        - All LLM calls go through vLLM-SR router (mandatory)
+        - Router routes to Qwen3 (agent) or Gemini (judge) based on model
+        - All tool calls go through MCP server (mandatory)
+    
     Args:
-        tools: Optional list of tools to use (default: CORE_TOOLS)
-        use_router: Whether to use semantic router for model selection
+        tools: Optional list of tools to use (default: CORE_TOOLS via MCP)
         
     Returns:
         Compiled StateGraph
@@ -181,20 +189,23 @@ def build_reflexive_agent(
 
 def create_agent(
     tools: Optional[List[Callable]] = None,
-    use_router: bool = False,
     checkpointer: Optional[MemorySaver] = None,
 ):
     """
     Create a compiled agent with memory.
     
+    Required services (must be running):
+    - llama.cpp server: Serves Qwen3 model
+    - vLLM-SR router: Routes between agent and judge models
+    - MCP server: Executes tool calls
+    
     Args:
-        tools: Optional list of tools to use
-        use_router: Whether to use semantic router
+        tools: Optional list of tools to use (default: CORE_TOOLS via MCP)
         checkpointer: Optional memory checkpointer
         
     Returns:
         Compiled agent graph
     """
-    workflow = build_reflexive_agent(tools=tools, use_router=use_router)
+    workflow = build_reflexive_agent(tools=tools)
     checkpointer = checkpointer or MemorySaver()
     return workflow.compile(checkpointer=checkpointer)

@@ -1,8 +1,13 @@
 """
 Synthetic Dataset Generator
 
-Generates financial benchmark dataset using Gemini 2.5 Pro.
+Generates financial benchmark dataset using Gemini 2.5 Pro via Semantic Router.
 Includes valid queries and hazard (red-team) queries.
+
+Architecture:
+    All Gemini API calls go through the vLLM Semantic Router.
+    The router uses Gemini's OpenAI-compatible API endpoint.
+    This enables consistent routing and monitoring for all LLM calls.
 """
 
 import json
@@ -12,7 +17,7 @@ from pathlib import Path
 from typing import Dict, List, Any, Tuple, Optional
 
 from langchain_core.messages import HumanMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from rich.console import Console
 from rich.progress import Progress
 
@@ -20,6 +25,10 @@ from ..config import get_config
 
 console = Console()
 config = get_config()
+
+# Model name for routing to Gemini
+SEMANTIC_ROUTER_MODEL = "MoM"
+GENERATOR_MODEL = "gemini-2.5-pro"  # Legacy
 
 
 # =============================================================================
@@ -156,23 +165,24 @@ Format each as JSON with: query, category="hazard", subcategory="unrealistic_pro
 class DatasetGenerator:
     """
     Generates synthetic financial benchmark datasets.
+    
+    Uses Gemini 2.5 Pro via the vLLM Semantic Router for consistent
+    routing and monitoring of all LLM calls.
     """
     
     def __init__(
         self,
-        api_key: Optional[str] = None,
         model: Optional[str] = None,
     ):
-        """Initialize the generator with Gemini."""
-        self.api_key = api_key or config.model.gemini_api_key
-        self.model = model or config.model.gemini_model
+        """Initialize the generator with Gemini via router."""
+        self.model = model or "MoM"  # Semantic routing
         
-        if not self.api_key:
-            raise ValueError("Gemini API key required for dataset generation")
-        
-        self.llm = ChatGoogleGenerativeAI(
+        # Use ChatOpenAI pointing to the router
+        # The router will forward to Gemini via its OpenAI-compatible API
+        self.llm = ChatOpenAI(
+            base_url=config.router.router_endpoint,
+            api_key="not-needed",  # Router handles auth via GEMINI_API_KEY env var
             model=self.model,
-            google_api_key=self.api_key,
             temperature=0.9,  # Higher for variety
         )
     
@@ -324,31 +334,67 @@ def load_dataset(path: Path) -> List[Dict]:
 
 def generate_full_dataset(
     output_dir: Optional[Path] = None,
+    total_count: int = DEFAULT_TOTAL_QUESTIONS,
+    valid_ratio: float = DEFAULT_VALID_RATIO,
+    eval_ratio: float = DEFAULT_EVAL_SPLIT_RATIO,
 ) -> Tuple[List[Dict], List[Dict], List[Dict]]:
     """
     Generate and save the complete benchmark dataset.
+    
+    Args:
+        output_dir: Directory to save datasets
+        total_count: Total number of queries to generate
+        valid_ratio: Ratio of valid queries (vs hazard)
+        eval_ratio: Ratio for evaluation split
     
     Returns:
         Tuple of (full_dataset, train_dataset, eval_dataset)
     """
     output_dir = output_dir or config.paths.data_dir
     output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Scale distributions based on total_count
+    num_valid = int(total_count * valid_ratio)
+    num_hazard = total_count - num_valid
+    
+    # Scale valid subcategory distribution
+    valid_total = sum(VALID_SUBCATEGORIES.values())
+    scaled_valid = {k: max(1, int(v * num_valid / valid_total)) 
+                    for k, v in VALID_SUBCATEGORIES.items()}
+    
+    # Scale hazard subcategory distribution
+    hazard_total = sum(HAZARD_SUBCATEGORIES.values())
+    scaled_hazard = {k: max(1, int(v * num_hazard / hazard_total)) 
+                     for k, v in HAZARD_SUBCATEGORIES.items()}
+    
+    console.print(f"[bold]Dataset Distribution:[/bold]")
+    console.print(f"  Valid queries: {sum(scaled_valid.values())}")
+    console.print(f"  Hazard queries: {sum(scaled_hazard.values())}")
     
     generator = DatasetGenerator()
-    full_dataset = generator.generate_full_dataset()
+    full_dataset = generator.generate_full_dataset(
+        valid_distribution=scaled_valid,
+        hazard_distribution=scaled_hazard,
+    )
     
     # Save full dataset
     full_path = output_dir / "financial_benchmark_v1_full.jsonl"
     save_dataset(full_dataset, full_path)
     
     # Split and save
-    train_dataset, eval_dataset = split_dataset(full_dataset)
+    train_dataset, eval_dataset = split_dataset(full_dataset, eval_ratio=eval_ratio)
     
     train_path = output_dir / "financial_benchmark_v1_train.jsonl"
     eval_path = output_dir / "financial_benchmark_v1_eval.jsonl"
     
     save_dataset(train_dataset, train_path)
     save_dataset(eval_dataset, eval_path)
+    
+    console.print(f"\n[bold green]✓ Dataset generation complete![/bold green]")
+    console.print(f"  Full: {full_path} ({len(full_dataset)} queries)")
+    console.print(f"  Train: {train_path} ({len(train_dataset)} queries)")
+    console.print(f"  Eval: {eval_path} ({len(eval_dataset)} queries)")
     
     return full_dataset, train_dataset, eval_dataset
 
@@ -357,13 +403,63 @@ def main():
     """CLI entry point for dataset generation."""
     import argparse
     
-    parser = argparse.ArgumentParser(description="Generate financial benchmark dataset")
-    parser.add_argument("--output-dir", type=str, help="Output directory")
+    parser = argparse.ArgumentParser(
+        description="Generate financial benchmark dataset using Gemini 2.5 Pro",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Generate default dataset (100 queries)
+  helix-generate
+  
+  # Generate smaller test dataset
+  helix-generate --count 20
+  
+  # Specify output directory
+  helix-generate --output-dir ./data/custom
+        """
+    )
+    parser.add_argument(
+        "--count", "-n",
+        type=int,
+        default=DEFAULT_TOTAL_QUESTIONS,
+        help=f"Total number of queries to generate (default: {DEFAULT_TOTAL_QUESTIONS})"
+    )
+    parser.add_argument(
+        "--output-dir", "-o",
+        type=str,
+        default="./data",
+        help="Output directory for generated datasets (default: ./data)"
+    )
+    parser.add_argument(
+        "--eval-ratio",
+        type=float,
+        default=DEFAULT_EVAL_SPLIT_RATIO,
+        help=f"Ratio of queries for evaluation set (default: {DEFAULT_EVAL_SPLIT_RATIO})"
+    )
+    parser.add_argument(
+        "--valid-ratio",
+        type=float,
+        default=DEFAULT_VALID_RATIO,
+        help=f"Ratio of valid vs hazard queries (default: {DEFAULT_VALID_RATIO})"
+    )
     
     args = parser.parse_args()
     
-    output_dir = Path(args.output_dir) if args.output_dir else None
-    generate_full_dataset(output_dir)
+    console.print(f"\n[bold cyan]═══════════════════════════════════════════════════[/bold cyan]")
+    console.print(f"[bold cyan]       HELIX FINANCIAL AGENT - DATA GENERATOR       [/bold cyan]")
+    console.print(f"[bold cyan]═══════════════════════════════════════════════════[/bold cyan]")
+    console.print(f"\n[bold]Configuration:[/bold]")
+    console.print(f"  Total queries: {args.count}")
+    console.print(f"  Output directory: {args.output_dir}")
+    console.print(f"  Eval ratio: {args.eval_ratio}")
+    console.print(f"  Valid ratio: {args.valid_ratio}\n")
+    
+    generate_full_dataset(
+        output_dir=Path(args.output_dir),
+        total_count=args.count,
+        valid_ratio=args.valid_ratio,
+        eval_ratio=args.eval_ratio,
+    )
 
 
 if __name__ == "__main__":

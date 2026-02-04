@@ -11,7 +11,7 @@ Architecture:
 
 vLLM-SR Ports (per documentation):
 - 8801: HTTP entry point through Envoy (OpenAI-compatible API)
-- 8080: Classification API (health, /v1/models)
+- 8889: Classification API (health, /v1/models)
 - 50051: gRPC ExtProc
 - 9190: Prometheus metrics
 
@@ -62,13 +62,18 @@ def create_router_config(output_path: Optional[Path] = None) -> dict:
     # Parse llama.cpp endpoint from environment
     llama_cpp_url = os.getenv("LLAMA_CPP_BASE_URL", config.model.llama_cpp_base_url)
     llama_host = "127.0.0.1"  # vLLM-SR requires IP, not hostname
-    llama_port = 8080
+    llama_port = 8081
     if ":" in llama_cpp_url:
         try:
             port_part = llama_cpp_url.split(":")[-1].split("/")[0]
             llama_port = int(port_part)
         except (ValueError, IndexError):
             pass
+    
+    # Get router ports from environment/config
+    http_port = int(os.getenv("ROUTER_HTTP_PORT", "8801"))
+    classify_port = int(os.getenv("ROUTER_CLASSIFY_PORT", "8889"))
+    metrics_port = int(os.getenv("ROUTER_METRICS_PORT", "9190"))
     
     router_config = {
         # =================================================================
@@ -79,6 +84,15 @@ def create_router_config(output_path: Optional[Path] = None) -> dict:
             "threshold": 0.6,
             "use_cpu": True,
         },
+        
+        # =================================================================
+        # Listeners - HTTP endpoints the router exposes (REQUIRED)
+        # =================================================================
+        "listeners": [
+            {"name": "http", "port": http_port, "type": "http"},
+            {"name": "classify", "port": classify_port, "type": "classify"},
+            {"name": "metrics", "port": metrics_port, "type": "metrics"},
+        ],
         
         # =================================================================
         # vLLM Endpoints - Backend model servers

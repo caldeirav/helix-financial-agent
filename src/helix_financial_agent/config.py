@@ -20,7 +20,7 @@ class ModelConfig(BaseModel):
     
     # llama.cpp served model (Agent)
     llama_cpp_base_url: str = Field(
-        default_factory=lambda: os.getenv("LLAMA_CPP_BASE_URL", "http://localhost:8080/v1")
+        default_factory=lambda: os.getenv("LLAMA_CPP_BASE_URL", "http://localhost:8081/v1")
     )
     llama_cpp_api_key: str = Field(
         default_factory=lambda: os.getenv("LLAMA_CPP_API_KEY", "not-needed")
@@ -53,7 +53,7 @@ class RouterConfig(BaseModel):
     
     vLLM-SR ports per documentation:
     - 8801: HTTP entry point through Envoy (OpenAI-compatible API)
-    - 8080: Classification API (health, /v1/models)
+    - 8889: Classification API (health, /v1/models)
     - 9190: Prometheus metrics
     
     See: https://vllm-semantic-router.com/docs/api/router/
@@ -66,7 +66,7 @@ class RouterConfig(BaseModel):
         default_factory=lambda: int(os.getenv("ROUTER_HTTP_PORT", "8801"))
     )
     router_classify_port: int = Field(
-        default_factory=lambda: int(os.getenv("ROUTER_CLASSIFY_PORT", "8080"))
+        default_factory=lambda: int(os.getenv("ROUTER_CLASSIFY_PORT", "8889"))
     )
     router_metrics_port: int = Field(
         default_factory=lambda: int(os.getenv("ROUTER_METRICS_PORT", "9190"))

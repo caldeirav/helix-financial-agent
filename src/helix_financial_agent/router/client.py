@@ -14,7 +14,7 @@ Gemini OpenAI compatibility: https://ai.google.dev/gemini-api/docs/openai
 
 vLLM-SR Ports (per https://vllm-semantic-router.com/docs/api/router/):
 - 8801: HTTP entry point through Envoy (POST /v1/chat/completions)
-- 8080: Classification API (GET /v1/models, GET /health)
+- 8889: Classification API (GET /v1/models, GET /health)
 - 9190: Prometheus metrics (GET /metrics)
 """
 
@@ -65,7 +65,7 @@ class SemanticRouterClient:
     
     # Default ports per vLLM-SR documentation
     DEFAULT_HTTP_PORT = 8801      # Envoy HTTP entry point
-    DEFAULT_CLASSIFY_PORT = 8080  # Classification API
+    DEFAULT_CLASSIFY_PORT = 8889  # Classification API
     DEFAULT_METRICS_PORT = 9190   # Prometheus metrics
     
     def __init__(
@@ -198,7 +198,7 @@ class SemanticRouterClient:
         """
         Get list of available models from the router.
         
-        Endpoint: GET /v1/models (port 8080 - Classification API)
+        Endpoint: GET /v1/models (port 8889 - Classification API)
         
         Returns list including synthetic "MoM" (Model of Models) that
         uses router's intent classification to select the best model.
@@ -212,7 +212,7 @@ class SemanticRouterClient:
         """
         Check if the router is healthy.
         
-        Endpoint: GET /health (port 8080 - Classification API)
+        Endpoint: GET /health (port 8889 - Classification API)
         """
         try:
             classify_url = f"http://{self.host}:{self.DEFAULT_CLASSIFY_PORT}/health"
@@ -225,7 +225,7 @@ class SemanticRouterClient:
         """
         Get detailed health status including model status and cache info.
         
-        Endpoint: GET /health (port 8080)
+        Endpoint: GET /health (port 8889)
         """
         try:
             classify_url = f"http://{self.host}:{self.DEFAULT_CLASSIFY_PORT}/health"
@@ -259,7 +259,7 @@ class SemanticRouterClient:
         """
         Get classifier configuration details.
         
-        Endpoint: GET /info/classifier (port 8080)
+        Endpoint: GET /info/classifier (port 8889)
         """
         try:
             url = f"http://{self.host}:{self.DEFAULT_CLASSIFY_PORT}/info/classifier"

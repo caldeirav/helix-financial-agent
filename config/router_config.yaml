@@ -1,222 +1,253 @@
-bert_model:
-  model_id: sentence-transformers/all-MiniLM-L12-v2
-  threshold: 0.6
-  use_cpu: true
-vllm_endpoints:
-- name: llama_cpp_local
-  address: 127.0.0.1
-  port: 8080
-  models:
-  - qwen3-30b-a3b
-  weight: 1
-- name: gemini_openai
-  address: generativelanguage.googleapis.com
-  port: 443
-  protocol: https
-  base_path: /v1beta/openai
-  models:
-  - gemini-2.5-pro
-  weight: 1
-  api_key_env: GEMINI_API_KEY
-model_config:
-  qwen3-30b-a3b:
-    preferred_endpoints:
-    - llama_cpp_local
-    pii_policy:
-      allow_by_default: true
-      pii_types_allowed:
-      - EMAIL_ADDRESS
-      - PERSON
-  gemini-2.5-pro:
-    preferred_endpoints:
-    - gemini_openai
-    pii_policy:
-      allow_by_default: true
-categories:
-- name: financial_analysis
-- name: evaluation
-- name: data_generation
-- name: general
+# vLLM Semantic Router Configuration for Helix Financial Agent
+# See: https://vllm-semantic-router.com/docs/installation/configuration/
+
+version: v0.1
+
+# Listeners - Network configuration
+listeners:
+  - name: "http"
+    address: "0.0.0.0"
+    port: 8801
+    timeout: "300s"
+
+# Signals - Classification signals for routing
 signals:
+  # Financial analysis keywords -> route to Qwen (local, fast)
   keywords:
-  - name: financial_keywords
-    operator: OR
-    keywords:
-    - stock
-    - price
-    - ticker
-    - PE ratio
-    - market cap
-    - dividend
-    - revenue
-    - earnings
-    - balance sheet
-    - income statement
-    - cash flow
-    - financial
-    - portfolio
-    - investment
-    - trading
-    - shares
-    - fundamentals
-    - analyst
-    - recommendation
-    case_sensitive: false
-  - name: company_keywords
-    operator: OR
-    keywords:
-    - AAPL
-    - MSFT
-    - GOOGL
-    - AMZN
-    - NVDA
-    - TSLA
-    - META
-    - JPM
-    - V
-    - WMT
-    - Apple
-    - Microsoft
-    - Google
-    - Amazon
-    - Tesla
-    - Nvidia
-    case_sensitive: false
-  - name: evaluation_keywords
-    operator: OR
-    keywords:
-    - evaluate
-    - judge
-    - critique
-    - review
-    - assess
-    - score
-    - rate
-    - correctness
-    - accuracy
-    - quality
-    - benchmark
-    - grading
-    - validation
-    - is correct
-    - check response
-    - verify answer
-    case_sensitive: false
-  - name: generation_keywords
-    operator: OR
-    keywords:
-    - generate
-    - create synthetic
-    - dataset
-    - test case
-    - benchmark question
-    - sample query
-    - example question
-    - diverse
-    - variation
-    - synthetic data
-    case_sensitive: false
+    - name: "financial_keywords"
+      operator: "OR"
+      keywords:
+        - "stock"
+        - "price"
+        - "ticker"
+        - "PE ratio"
+        - "market cap"
+        - "dividend"
+        - "revenue"
+        - "earnings"
+        - "balance sheet"
+        - "income statement"
+        - "cash flow"
+        - "financial"
+        - "portfolio"
+        - "investment"
+        - "trading"
+        - "shares"
+        - "fundamentals"
+        - "analyst"
+        - "recommendation"
+      case_sensitive: false
+
+    - name: "company_keywords"
+      operator: "OR"
+      keywords:
+        - "AAPL"
+        - "MSFT"
+        - "GOOGL"
+        - "AMZN"
+        - "NVDA"
+        - "TSLA"
+        - "META"
+        - "JPM"
+        - "Apple"
+        - "Microsoft"
+        - "Google"
+        - "Amazon"
+        - "Tesla"
+        - "Nvidia"
+      case_sensitive: false
+
+    # Evaluation keywords -> route to Gemini (high-quality judging)
+    - name: "evaluation_keywords"
+      operator: "OR"
+      keywords:
+        - "evaluate"
+        - "judge"
+        - "critique"
+        - "review"
+        - "assess"
+        - "score"
+        - "rate"
+        - "correctness"
+        - "accuracy"
+        - "quality"
+        - "benchmark"
+        - "grading"
+        - "validation"
+        - "EVALUATE"
+      case_sensitive: false
+
+    # Data generation keywords -> route to Gemini
+    - name: "generation_keywords"
+      operator: "OR"
+      keywords:
+        - "generate"
+        - "create synthetic"
+        - "dataset"
+        - "test case"
+        - "benchmark question"
+        - "sample query"
+        - "example question"
+        - "diverse"
+        - "variation"
+        - "synthetic data"
+      case_sensitive: false
+
+  # Embedding-based signals (semantic similarity)
   embeddings:
-  - name: stock_analysis_intent
-    threshold: 0.7
-    candidates:
-    - analyze stock performance
-    - get financial data for company
-    - what is the PE ratio
-    - show me the balance sheet
-    aggregation_method: max
-  - name: evaluation_intent
-    threshold: 0.75
-    candidates:
-    - evaluate this response for correctness
-    - judge the quality of this answer
-    - score this financial analysis
-    - assess the accuracy of the response
-    aggregation_method: max
-  - name: generation_intent
-    threshold: 0.75
-    candidates:
-    - generate synthetic test questions
-    - create benchmark dataset
-    - produce diverse query examples
-    aggregation_method: max
+    - name: "stock_analysis_intent"
+      threshold: 0.70
+      candidates:
+        - "analyze stock performance"
+        - "get financial data for company"
+        - "what is the PE ratio"
+        - "show me the balance sheet"
+        - "stock market analysis"
+        - "investment recommendation"
+      aggregation_method: "max"
+
+    - name: "evaluation_intent"
+      threshold: 0.75
+      candidates:
+        - "evaluate this response for correctness"
+        - "judge the quality of this answer"
+        - "score this financial analysis"
+        - "assess the accuracy of the response"
+        - "grade this answer"
+      aggregation_method: "max"
+
+    - name: "generation_intent"
+      threshold: 0.75
+      candidates:
+        - "generate synthetic test questions"
+        - "create benchmark dataset"
+        - "produce diverse query examples"
+        - "create test data"
+      aggregation_method: "max"
+
+  # Domain signals
+  domains:
+    - name: "economics"
+      description: "Economics and financial topics"
+      mmlu_categories: ["economics"]
+    - name: "business"
+      description: "Business and management"
+      mmlu_categories: ["business"]
+    - name: "other"
+      description: "General knowledge"
+      mmlu_categories: ["other"]
+
+# Decisions - Routing logic
 decisions:
-- name: financial_analysis
-  description: Route financial analysis and market data queries to local Qwen model
-  priority: 10
-  rules:
-    operator: OR
-    conditions:
-    - type: keyword
-      name: financial_keywords
-    - type: keyword
-      name: company_keywords
-    - type: embedding
-      name: stock_analysis_intent
-  modelRefs:
-  - model: qwen3-30b-a3b
-    use_reasoning: true
-  plugins:
-  - type: system_prompt
-    configuration:
-      enabled: true
-      prompt: You are a financial analysis expert. Provide accurate, data-driven insights
-        about stocks, markets, and financial metrics.
-- name: evaluation
-  description: Route evaluation and LLM-as-a-Judge tasks to Gemini 2.5 Pro
-  priority: 15
-  rules:
-    operator: OR
-    conditions:
-    - type: keyword
-      name: evaluation_keywords
-    - type: embedding
-      name: evaluation_intent
-  modelRefs:
-  - model: gemini-2.5-pro
-    use_reasoning: true
-  plugins:
-  - type: system_prompt
-    configuration:
-      enabled: true
-      prompt: You are an expert evaluator. Assess responses for correctness, completeness,
-        and quality. Provide structured JSON feedback.
-- name: data_generation
-  description: Route synthetic data generation to Gemini 2.5 Pro
-  priority: 15
-  rules:
-    operator: OR
-    conditions:
-    - type: keyword
-      name: generation_keywords
-    - type: embedding
-      name: generation_intent
-  modelRefs:
-  - model: gemini-2.5-pro
-    use_reasoning: false
-  plugins:
-  - type: system_prompt
-    configuration:
-      enabled: true
-      prompt: You are a dataset generator. Create diverse, realistic test queries
-        for financial AI agents.
-- name: general
-  description: Route general queries to local Qwen model
-  priority: 5
-  rules:
-    operator: OR
-    conditions:
-    - type: domain
-      name: general
-  modelRefs:
-  - model: qwen3-30b-a3b
-    use_reasoning: false
-default_model: qwen3-30b-a3b
-semantic_cache:
-  enabled: false
-  backend_type: memory
-  similarity_threshold: 0.8
-prompt_guard:
-  enabled: false
-  threshold: 0.7
-  use_cpu: true
+  # Route evaluation/judging to Gemini (highest priority for judging tasks)
+  - name: "evaluation"
+    description: "Route evaluation and LLM-as-a-Judge tasks to Gemini 2.5 Pro"
+    priority: 150
+    rules:
+      operator: "OR"
+      conditions:
+        - type: "keyword"
+          name: "evaluation_keywords"
+        - type: "embedding"
+          name: "evaluation_intent"
+    modelRefs:
+      - model: "gemini-2.5-pro"
+        use_reasoning: true
+    plugins:
+      - type: "system_prompt"
+        configuration:
+          system_prompt: "You are an expert evaluator. Assess responses for correctness, completeness, and quality. Provide structured JSON feedback."
+
+  # Route data generation to Gemini
+  - name: "data_generation"
+    description: "Route synthetic data generation to Gemini 2.5 Pro"
+    priority: 140
+    rules:
+      operator: "OR"
+      conditions:
+        - type: "keyword"
+          name: "generation_keywords"
+        - type: "embedding"
+          name: "generation_intent"
+    modelRefs:
+      - model: "gemini-2.5-pro"
+        use_reasoning: false
+    plugins:
+      - type: "system_prompt"
+        configuration:
+          system_prompt: "You are a dataset generator. Create diverse, realistic test queries for financial AI agents."
+
+  # Route financial analysis to local Qwen model (fast inference)
+  - name: "financial_analysis"
+    description: "Route financial analysis and market data queries to local Qwen model"
+    priority: 100
+    rules:
+      operator: "OR"
+      conditions:
+        - type: "keyword"
+          name: "financial_keywords"
+        - type: "keyword"
+          name: "company_keywords"
+        - type: "embedding"
+          name: "stock_analysis_intent"
+        - type: "domain"
+          name: "economics"
+        - type: "domain"
+          name: "business"
+    modelRefs:
+      - model: "qwen3-30b-a3b"
+        use_reasoning: true
+    plugins:
+      - type: "system_prompt"
+        configuration:
+          system_prompt: "You are a financial analysis expert. Provide accurate, data-driven insights about stocks, markets, and financial metrics."
+
+  # General fallback to local Qwen
+  - name: "general"
+    description: "Route general queries to local Qwen model"
+    priority: 50
+    rules:
+      operator: "AND"
+      conditions:
+        - type: "domain"
+          name: "other"
+    modelRefs:
+      - model: "qwen3-30b-a3b"
+        use_reasoning: false
+
+# LLM - Backend model configuration
+providers:
+  models:
+    # Local Qwen3 model via llama.cpp
+    - name: "qwen3-30b-a3b"
+      reasoning_family: "qwen3"
+      param_size: "30b"
+      endpoints:
+        - name: "llama_cpp_local"
+          weight: 1
+          endpoint: "host.docker.internal:8081"
+          protocol: "http"
+
+    # Gemini 2.5 Pro via OpenAI-compatible API
+    # See: https://ai.google.dev/gemini-api/docs/openai
+    - name: "gemini-2.5-pro"
+      param_size: "unknown"
+      endpoints:
+        - name: "gemini_openai"
+          weight: 1
+          endpoint: "generativelanguage.googleapis.com"
+          protocol: "https"
+          base_path: "/v1beta/openai"
+      access_key_env: "GEMINI_API_KEY"
+
+  # Default model for fallback
+  default_model: "qwen3-30b-a3b"
+
+  # Reasoning families configuration
+  reasoning_families:
+    qwen3:
+      type: "chat_template_kwargs"
+      parameter: "enable_thinking"
+
+  # Default reasoning effort level
+  default_reasoning_effort: "medium"

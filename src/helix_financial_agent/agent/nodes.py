@@ -3,9 +3,43 @@ Agent Node Implementations
 
 Defines the nodes for the reflexive agent graph:
 - generator_node: Drafts responses using tools
-- tool_executor_node: Executes tool calls
+- tool_executor_node: Executes tool calls  
 - reflector_node: Critiques drafts
 - revisor_node: Refines responses
+
+================================================================================
+SEMANTIC ROUTING ARCHITECTURE
+================================================================================
+
+All LLM calls use `model="MoM"` (Model of Models), which tells the vLLM Semantic
+Router to automatically select the best model based on the request content.
+
+How it works:
+    1. Application sends request with model="MoM"
+    2. Router analyzes the prompt content using:
+       - Keyword signals: Detects domain-specific terms
+       - Embedding signals: Semantic similarity to intent candidates
+    3. Router matches against configured "decisions" (routing rules)
+    4. Router forwards to the appropriate backend:
+       - Financial analysis queries → Qwen3 (llama.cpp)
+       - Evaluation/judging tasks → Gemini 2.5 Pro
+
+Intent Markers:
+    Prompts include subtle intent markers that help the router classify requests:
+    - "[FINANCIAL_ANALYSIS]" → Routes to Qwen3 for stock/market queries
+    - "[EVALUATE]" → Routes to Gemini for quality assessment
+    - "[REVISE]" → Routes to Qwen3 for response improvement
+
+Benefits:
+    - No hardcoded model selection in application code
+    - Routing logic centralized in router_config.yaml
+    - Easy to add new models or change routing without code changes
+    - Observable via router metrics (port 9190)
+
+See: config/router_config.yaml for routing rules
+See: https://vllm-semantic-router.com/docs/tutorials/intelligent-route/
+
+================================================================================
 """
 
 import json
@@ -28,30 +62,73 @@ from .prompts import (
 config = get_config()
 
 
+# =============================================================================
+# SEMANTIC ROUTING CONFIGURATION
+# =============================================================================
+# 
+# We use "MoM" (Model of Models) for all requests, letting the semantic router
+# decide which model is most appropriate based on the content.
+#
+# The router detects intent from:
+#   1. Keywords in the prompt (e.g., "stock", "evaluate", "generate")
+#   2. Semantic embeddings compared against intent candidates
+#   3. Priority-based decision matching
+#
+# Routing decisions (see router_config.yaml):
+#   - financial_analysis (priority 10) → qwen3-30b-a3b (llama.cpp)
+#   - evaluation (priority 15) → gemini-2.5-pro (Gemini API)
+#   - data_generation (priority 15) → gemini-2.5-pro (Gemini API)
+#   - general (priority 5) → qwen3-30b-a3b (fallback)
+#
+# =============================================================================
+
+# Semantic routing model - router auto-selects based on content
+SEMANTIC_ROUTER_MODEL = "MoM"
+
+# Legacy explicit model names (kept for reference/debugging)
+AGENT_MODEL = "qwen3-30b-a3b"      # Direct route to llama.cpp
+JUDGE_MODEL = "gemini-2.5-pro"     # Direct route to Gemini
+AUTO_MODEL = "MoM"                  # Alias for semantic routing
+
+
 def create_llm(
-    use_router: bool = False,
     temperature: Optional[float] = None,
+    use_semantic_routing: bool = True,
 ) -> ChatOpenAI:
     """
-    Create an LLM instance configured for the agent.
+    Create an LLM instance using the vLLM Semantic Router.
+    
+    By default, uses "MoM" (Model of Models) which enables automatic model
+    selection based on the content of each request. The router analyzes
+    keywords and semantic embeddings to route to the most appropriate model.
+    
+    Routing Flow:
+        Application → Router (model="MoM") → Analysis → Decision → Backend
+                                                                    ├─ Qwen3 (financial)
+                                                                    └─ Gemini (evaluation)
     
     Args:
-        use_router: Whether to use the semantic router endpoint
-        temperature: Optional temperature override
+        temperature: Temperature for response generation (default from config)
+        use_semantic_routing: If True, uses MoM for auto-routing (recommended).
+                             If False, uses default agent model directly.
         
     Returns:
-        Configured ChatOpenAI instance
+        Configured ChatOpenAI instance pointing to the semantic router
+        
+    Example:
+        # Semantic routing (recommended) - router decides model
+        llm = create_llm()
+        
+        # The router will analyze the prompt and route accordingly:
+        # - "What is AAPL's PE ratio?" → Qwen3 (financial_analysis)
+        # - "Evaluate this response..." → Gemini (evaluation)
     """
-    base_url = (
-        config.router.router_endpoint 
-        if use_router 
-        else config.model.llama_cpp_base_url
-    )
+    model = SEMANTIC_ROUTER_MODEL if use_semantic_routing else AGENT_MODEL
     
     return ChatOpenAI(
-        base_url=base_url,
-        api_key=config.model.llama_cpp_api_key,
-        model=config.model.agent_model_name,
+        base_url=config.router.router_endpoint,
+        api_key="not-needed",  # Router handles auth per backend
+        model=model,
         temperature=temperature or config.model.agent_temperature,
         max_tokens=config.model.agent_max_tokens,
     )
@@ -67,6 +144,11 @@ def generator_node(
     - Takes user query and generates draft response using yfinance tools
     - This is the primary "thinking" node that gathers data and drafts answers
     
+    Semantic Routing:
+        Uses model="MoM" with financial analysis intent markers.
+        The router detects keywords like "stock", "price", "PE ratio" and
+        routes to Qwen3 (llama.cpp) for financial analysis tasks.
+    
     Args:
         state: Current agent state
         llm: Optional LLM instance (creates default if not provided)
@@ -75,6 +157,7 @@ def generator_node(
     Returns:
         State update with new message
     """
+    # Create LLM with semantic routing - router will detect financial analysis intent
     llm = llm or create_llm()
     tools = tools or CORE_TOOLS
     
@@ -84,20 +167,23 @@ def generator_node(
     # Bind tools to LLM
     llm_with_tools = llm.bind_tools(tools)
     
-    # Build context with any previous critique
+    # Build system prompt with intent markers for semantic routing
+    # The "[FINANCIAL_ANALYSIS]" marker helps the router classify this request
     system_message = SystemMessage(content=GENERATOR_SYSTEM_PROMPT)
     
     # If this is a revision iteration, include the critique context
     if iteration > 0 and state.get("critique"):
         revision_context = f"""
-REVISION REQUIRED (Iteration {iteration}):
+[FINANCIAL_ANALYSIS] REVISION REQUIRED (Iteration {iteration}):
 Previous critique: {state['critique']}
 
 Please revise your response to address all issues raised.
+Use the financial tools to gather accurate data.
 """
         messages = messages + [SystemMessage(content=revision_context)]
     
     # Invoke LLM with tools
+    # Router analyzes content → detects financial keywords → routes to Qwen3
     response = llm_with_tools.invoke([system_message] + messages)
     
     return {
@@ -160,6 +246,12 @@ def reflector_node(
     - Checks for hallucinations, advice violations, completeness
     - Returns structured critique with pass/fail decision
     
+    Semantic Routing:
+        Uses model="MoM" with evaluation intent markers.
+        The router detects keywords like "evaluate", "assess", "critique", "judge"
+        and semantic similarity to evaluation intent, then routes to Gemini 2.5 Pro
+        for high-quality response assessment.
+    
     Args:
         state: Current agent state
         llm: Optional LLM instance
@@ -167,7 +259,9 @@ def reflector_node(
     Returns:
         State update with critique
     """
-    llm = llm or create_llm(temperature=0.3)  # Lower temp for evaluation
+    # Create LLM with semantic routing - router will detect evaluation intent
+    # and route to Gemini 2.5 Pro for quality assessment
+    llm = llm or create_llm(temperature=0.0)
     
     messages = state["messages"]
     tool_outputs = state.get("tool_outputs", [])
@@ -187,21 +281,26 @@ def reflector_node(
             "sender": "reflector",
         }
     
-    # Build reflection prompt
-    reflection_prompt = f"""
+    # Build reflection prompt with EVALUATION intent markers
+    # These keywords trigger the router to route to Gemini 2.5 Pro:
+    # "evaluate", "assess", "critique", "judge", "correctness", "accuracy"
+    reflection_prompt = f"""[EVALUATE] TASK: Assess and judge the quality of this financial response.
+
 ORIGINAL USER QUERY:
 {original_query}
 
-TOOL OUTPUTS (Ground Truth):
+TOOL OUTPUTS (Ground Truth to validate against):
 {json.dumps(tool_outputs, indent=2)}
 
-DRAFT RESPONSE TO EVALUATE:
+DRAFT RESPONSE TO EVALUATE AND CRITIQUE:
 {draft_response}
 
-Please evaluate this draft response according to your criteria.
+Please evaluate this draft response for correctness, accuracy, and quality.
+Score the response and provide detailed feedback on any issues found.
 """
     
-    # Use the same LLM for reflection
+    # Invoke with evaluation-focused system prompt
+    # Router analyzes content → detects evaluation keywords → routes to Gemini
     response = llm.invoke([
         SystemMessage(content=REFLECTOR_SYSTEM_PROMPT),
         HumanMessage(content=reflection_prompt)
@@ -240,6 +339,11 @@ def revisor_node(
     - Takes the critique and generates an improved response
     - Addresses all issues raised by the reflector
     
+    Semantic Routing:
+        Uses model="MoM" with financial analysis intent markers.
+        The router detects this is a revision task for financial content
+        and routes to Qwen3 (llama.cpp) for response improvement.
+    
     Args:
         state: Current agent state
         llm: Optional LLM instance
@@ -248,6 +352,7 @@ def revisor_node(
     Returns:
         State update with revised response
     """
+    # Create LLM with semantic routing - router will detect financial revision intent
     llm = llm or create_llm()
     tools = tools or CORE_TOOLS
     
@@ -264,18 +369,26 @@ def revisor_node(
         if isinstance(msg, AIMessage) and msg.content and not msg.content.startswith("[REFLECTION]"):
             draft_response = msg.content
     
-    revision_prompt = f"""
-ORIGINAL QUERY: {original_query}
+    # Build revision prompt with FINANCIAL_ANALYSIS intent markers
+    # Keywords like "stock", "financial", "portfolio" trigger routing to Qwen3
+    revision_prompt = f"""[FINANCIAL_ANALYSIS] REVISION TASK: Improve this stock market analysis.
 
-PREVIOUS DRAFT:
+ORIGINAL FINANCIAL QUERY: {original_query}
+
+PREVIOUS DRAFT RESPONSE:
 {draft_response}
 
-CRITIQUE FROM RISK ANALYST:
+CRITIQUE FROM RISK ANALYST (issues to address):
 {critique}
 
-Please generate an improved response that addresses all issues raised.
+Please generate an improved financial analysis response that:
+1. Addresses all issues raised in the critique
+2. Uses accurate data from the financial tools
+3. Provides proper stock market context
+4. Includes appropriate investment disclaimers
 """
     
+    # Router analyzes content → detects financial keywords → routes to Qwen3
     response = llm_with_tools.invoke([
         SystemMessage(content=REVISOR_SYSTEM_PROMPT),
         HumanMessage(content=revision_prompt)

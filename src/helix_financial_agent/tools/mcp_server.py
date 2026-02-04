@@ -18,8 +18,7 @@ config = get_config()
 # Create FastMCP server instance
 mcp = FastMCP(
     name="Helix Financial Tools",
-    version="0.1.0",
-    description="Financial data tools powered by yfinance for stock analysis, fundamentals, and market data"
+    instructions="Financial data tools powered by yfinance for stock analysis, fundamentals, and market data"
 )
 
 

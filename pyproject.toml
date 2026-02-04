@@ -17,25 +17,19 @@ dependencies = [
     "langchain-openai>=0.2.0",
     "langchain-google-genai>=2.0.0",
     "langgraph>=0.2.0",
-    
     # Financial Data
     "yfinance>=0.2.40",
-    
     # MCP Server
     "fastmcp>=2.0.0",
-    
     # Semantic Router (required - beta version)
     # Using >=0.1.0b0 to explicitly allow pre-release versions
     "vllm-sr>=0.1.0b0",
-    
     # RAG / Embeddings
     "sentence-transformers>=3.0.0",
     "chromadb>=0.5.0",
     "numpy>=1.26.0",
-    
     # Tracing & Logging
     "mlflow>=2.15.0",
-    
     # Utilities
     "python-dotenv>=1.0.0",
     "pydantic>=2.0.0",
