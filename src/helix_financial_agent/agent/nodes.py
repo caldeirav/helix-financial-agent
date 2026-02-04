@@ -310,15 +310,47 @@ Score the response and provide detailed feedback on any issues found.
     critique_text = response.content
     critique_passed = False
     
-    # Try to parse JSON from response
+    # Passing threshold - responses scoring >= this value are considered acceptable
+    PASSING_SCORE_THRESHOLD = 8.0
+    
+    # Try multiple methods to determine if critique passed
+    
+    # Method 1: Try to parse JSON from response
     try:
         json_match = re.search(r'\{[\s\S]*\}', critique_text)
         if json_match:
             critique_json = json.loads(json_match.group())
-            critique_passed = critique_json.get("passed", False)
-    except (json.JSONDecodeError, AttributeError):
-        # If JSON parsing fails, look for explicit pass/fail indicators
-        critique_passed = '"passed": true' in critique_text.lower() or '"passed":true' in critique_text.lower()
+            if "passed" in critique_json:
+                critique_passed = critique_json.get("passed", False)
+            elif "score" in critique_json:
+                # JSON with numeric score
+                critique_passed = float(critique_json.get("score", 0)) >= PASSING_SCORE_THRESHOLD
+    except (json.JSONDecodeError, AttributeError, ValueError):
+        pass
+    
+    # Method 2: If JSON parsing didn't work, look for explicit pass/fail indicators
+    if not critique_passed:
+        if '"passed": true' in critique_text.lower() or '"passed":true' in critique_text.lower():
+            critique_passed = True
+    
+    # Method 3: Extract numeric score from markdown format (e.g., "Score: 8.5 / 10" or "8.5/10")
+    if not critique_passed:
+        # Match patterns like "Score: 8.5 / 10", "8.5/10", "Score: 9", "**8.5 / 10**"
+        score_patterns = [
+            r'[Ss]core[:\s]+\*?\*?(\d+(?:\.\d+)?)\s*/\s*10',  # "Score: 8.5 / 10"
+            r'[Ss]core[:\s]+\*?\*?(\d+(?:\.\d+)?)',           # "Score: 8.5"
+            r'(\d+(?:\.\d+)?)\s*/\s*10',                       # "8.5 / 10"
+            r'[Ee]valuation[:\s]+\*?\*?(\d+(?:\.\d+)?)',      # "Evaluation: 8.5"
+        ]
+        for pattern in score_patterns:
+            match = re.search(pattern, critique_text)
+            if match:
+                try:
+                    score = float(match.group(1))
+                    critique_passed = score >= PASSING_SCORE_THRESHOLD
+                    break
+                except ValueError:
+                    continue
     
     return {
         "messages": [AIMessage(content=f"[REFLECTION]: {critique_text}")],

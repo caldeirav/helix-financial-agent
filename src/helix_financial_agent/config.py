@@ -100,7 +100,7 @@ class ToolRAGConfig(BaseModel):
         default_factory=lambda: int(os.getenv("TOOL_RAG_TOP_K", "5"))
     )
     threshold: float = Field(
-        default_factory=lambda: float(os.getenv("TOOL_RAG_THRESHOLD", "0.5"))
+        default_factory=lambda: float(os.getenv("TOOL_RAG_THRESHOLD", "0.35"))
     )
 
 

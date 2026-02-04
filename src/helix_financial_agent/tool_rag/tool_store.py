@@ -29,14 +29,29 @@ class ToolDefinition:
     use_cases: List[str] = field(default_factory=list)
     
     def to_embedding_text(self) -> str:
-        """Create text representation for embedding."""
-        parts = [
-            f"Tool: {self.name}",
-            f"Description: {self.description}",
-            f"Use cases: {', '.join(self.use_cases)}",
-            f"Keywords: {', '.join(self.keywords)}",
-        ]
-        return "\n".join(parts)
+        """
+        Create text representation for embedding.
+        
+        Uses a query-centric format that embeds well against user questions.
+        The use cases are natural language questions, so we put them first
+        to maximize similarity with user queries.
+        """
+        # Build a query-centric embedding that matches how users ask questions
+        # Start with use cases (natural questions) which match user query format
+        parts = []
+        
+        # Use cases first - these are most similar to actual user queries
+        if self.use_cases:
+            parts.append(" ".join(self.use_cases))
+        
+        # Keywords as phrases users might mention
+        if self.keywords:
+            parts.append(" ".join(self.keywords))
+        
+        # Description provides context
+        parts.append(self.description)
+        
+        return " ".join(parts)
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
