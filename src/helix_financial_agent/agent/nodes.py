@@ -2,10 +2,10 @@
 Agent Node Implementations
 
 Defines the nodes for the reflexive agent graph:
-- generator_node: Drafts responses using tools
-- tool_executor_node: Executes tool calls  
-- reflector_node: Critiques drafts
-- revisor_node: Refines responses
+- generator_node: Drafts responses using tools (routes to Qwen3)
+- tool_executor_node: Executes tool calls via MCP server
+- reflector_node: Critiques drafts (routes to Gemini)
+- revisor_node: Refines responses (routes to Qwen3)
 
 ================================================================================
 SEMANTIC ROUTING ARCHITECTURE
@@ -14,30 +14,78 @@ SEMANTIC ROUTING ARCHITECTURE
 All LLM calls use `model="MoM"` (Model of Models), which tells the vLLM Semantic
 Router to automatically select the best model based on the request content.
 
-How it works:
-    1. Application sends request with model="MoM"
-    2. Router analyzes the prompt content using:
-       - Keyword signals: Detects domain-specific terms
+Request Flow:
+    Node → ChatOpenAI(model="MoM") → Router → Signal Analysis → Backend Selection
+                                                                  ├─ Qwen3 (llama.cpp)
+                                                                  └─ Gemini API
+
+How Routing Works:
+    1. Node calls create_llm() which returns ChatOpenAI pointing to router endpoint
+    2. LLM call includes model="MoM" (semantic routing mode)
+    3. Router extracts signals from the prompt:
+       - Keyword signals: Pattern matching for domain terms
        - Embedding signals: Semantic similarity to intent candidates
-    3. Router matches against configured "decisions" (routing rules)
-    4. Router forwards to the appropriate backend:
-       - Financial analysis queries → Qwen3 (llama.cpp)
-       - Evaluation/judging tasks → Gemini 2.5 Pro
+    4. Router matches signals against priority-ordered decisions
+    5. Router forwards request to the selected backend model
 
-Intent Markers:
-    Prompts include subtle intent markers that help the router classify requests:
-    - "[FINANCIAL_ANALYSIS]" → Routes to Qwen3 for stock/market queries
-    - "[EVALUATE]" → Routes to Gemini for quality assessment
-    - "[REVISE]" → Routes to Qwen3 for response improvement
+================================================================================
+ROUTING DECISIONS (from router_config.yaml)
+================================================================================
 
-Benefits:
-    - No hardcoded model selection in application code
-    - Routing logic centralized in router_config.yaml
-    - Easy to add new models or change routing without code changes
-    - Observable via router metrics (port 9190)
+| Decision            | Priority | Trigger Keywords                    | Model     |
+|---------------------|----------|-------------------------------------|-----------|
+| evaluation          | 15       | evaluate, judge, assess, score      | Gemini    |
+| data_generation     | 15       | generate, synthetic, dataset        | Gemini    |
+| financial_analysis  | 10       | stock, price, PE ratio, dividend    | Qwen3     |
+| general             | 5        | (fallback)                          | Qwen3     |
 
-See: config/router_config.yaml for routing rules
-See: https://vllm-semantic-router.com/docs/tutorials/intelligent-route/
+Higher priority decisions are checked first. The first matching decision wins.
+
+================================================================================
+INTENT MARKERS
+================================================================================
+
+Each node includes intent markers in prompts to help the router classify:
+
+    Generator Node:
+        "[FINANCIAL_ANALYSIS] Analyze the stock..." → Routes to Qwen3
+        
+    Reflector Node:
+        "[EVALUATE] Assess and judge this response..." → Routes to Gemini
+        
+    Revisor Node:
+        "[FINANCIAL_ANALYSIS] REVISION TASK: Improve..." → Routes to Qwen3
+
+These markers are combined with natural keywords for robust classification.
+The router uses both keyword matching AND semantic embeddings, so markers
+help but aren't strictly required.
+
+================================================================================
+CODE INTEGRATION
+================================================================================
+
+LLM Creation (create_llm function):
+    - Points ChatOpenAI to router endpoint (http://localhost:8801/v1)
+    - Sets model="MoM" for automatic model selection
+    - Router handles authentication per backend (GEMINI_API_KEY, etc.)
+
+Tool Binding:
+    - Only ToolRAG-selected tools are bound to LLM in generator/revisor
+    - This keeps prompts focused and reduces context size
+
+Response Metadata:
+    - Router adds routing_metadata to responses
+    - Contains: selected_model, confidence, processing_time_ms
+    - Displayed in verbose output for observability
+
+================================================================================
+SEE ALSO
+================================================================================
+
+    - router/config.py: Router configuration generation
+    - router/client.py: Direct router client for health/metrics
+    - config/router_config.yaml: Active routing rules
+    - https://vllm-semantic-router.com/docs/tutorials/intelligent-route/
 
 ================================================================================
 """
@@ -65,29 +113,54 @@ config = get_config()
 # =============================================================================
 # SEMANTIC ROUTING CONFIGURATION
 # =============================================================================
-# 
-# We use "MoM" (Model of Models) for all requests, letting the semantic router
-# decide which model is most appropriate based on the content.
 #
-# The router detects intent from:
-#   1. Keywords in the prompt (e.g., "stock", "evaluate", "generate")
-#   2. Semantic embeddings compared against intent candidates
-#   3. Priority-based decision matching
+# MODEL SELECTION STRATEGY
+# ------------------------
+# We use "MoM" (Model of Models) for all LLM requests. This tells the vLLM
+# Semantic Router to automatically select the best backend model based on
+# the content of each request.
 #
-# Routing decisions (see router_config.yaml):
-#   - financial_analysis (priority 10) → qwen3-30b-a3b (llama.cpp)
-#   - evaluation (priority 15) → gemini-2.5-pro (Gemini API)
-#   - data_generation (priority 15) → gemini-2.5-pro (Gemini API)
-#   - general (priority 5) → qwen3-30b-a3b (fallback)
+# WHY SEMANTIC ROUTING?
+# ---------------------
+# Instead of hardcoding model selection in Python:
+#   ❌ llm = ChatOpenAI(model="gpt-4")  # Hardcoded
+#   ✅ llm = ChatOpenAI(model="MoM")    # Router decides
+#
+# Benefits:
+#   - Change models without code changes (edit router_config.yaml)
+#   - Centralized routing logic (observable, testable)
+#   - A/B testing between models
+#   - Metrics and observability (port 9190)
+#
+# HOW IT WORKS
+# ------------
+# 1. All LLM calls go through ChatOpenAI pointed at router (port 8801)
+# 2. Router extracts signals from prompt content:
+#    - Keyword signals: "stock", "evaluate", "generate" → triggers decisions
+#    - Embedding signals: semantic similarity to intent candidates
+# 3. Router matches against priority-ordered decisions
+# 4. Request forwarded to selected backend with routing_metadata
+#
+# ROUTING DECISIONS (see config/router_config.yaml)
+# -------------------------------------------------
+# Priority | Decision           | Triggers                    | Routes To
+# ---------|--------------------|-----------------------------|----------
+# 15       | evaluation         | evaluate, judge, assess     | Gemini
+# 15       | data_generation    | generate, synthetic         | Gemini
+# 10       | financial_analysis | stock, price, PE ratio      | Qwen3
+# 5        | general            | (fallback)                  | Qwen3
 #
 # =============================================================================
 
 # Semantic routing model - router auto-selects based on content
+# When ChatOpenAI receives model="MoM", it sends this to the router
+# The router then analyzes the prompt and selects the appropriate backend
 SEMANTIC_ROUTER_MODEL = "MoM"
 
-# Legacy explicit model names (kept for reference/debugging)
-AGENT_MODEL = "qwen3-30b-a3b"      # Direct route to llama.cpp
-JUDGE_MODEL = "gemini-2.5-pro"     # Direct route to Gemini
+# Explicit model names for direct routing (bypasses semantic analysis)
+# Use these for debugging or when you need guaranteed model selection
+AGENT_MODEL = "qwen3-30b-a3b"      # Direct route to llama.cpp (Qwen3)
+JUDGE_MODEL = "gemini-2.5-pro"     # Direct route to Gemini API
 AUTO_MODEL = "MoM"                  # Alias for semantic routing
 
 
@@ -96,32 +169,54 @@ def create_llm(
     use_semantic_routing: bool = True,
 ) -> ChatOpenAI:
     """
-    Create an LLM instance using the vLLM Semantic Router.
+    Create an LLM instance connected to the vLLM Semantic Router.
     
-    By default, uses "MoM" (Model of Models) which enables automatic model
-    selection based on the content of each request. The router analyzes
-    keywords and semantic embeddings to route to the most appropriate model.
+    This is the primary interface between the agent and the LLM backends.
+    All LLM calls flow through the semantic router, which automatically
+    selects the best model based on the content of each request.
+    
+    Connection Setup:
+        - base_url: Points to router's HTTP endpoint (default: localhost:8801/v1)
+        - model: "MoM" enables automatic model selection
+        - api_key: Set to "not-needed" (router handles auth per backend)
     
     Routing Flow:
-        Application → Router (model="MoM") → Analysis → Decision → Backend
-                                                                    ├─ Qwen3 (financial)
-                                                                    └─ Gemini (evaluation)
+        1. ChatOpenAI sends request to router with model="MoM"
+        2. Router extracts signals from prompt (keywords + embeddings)
+        3. Router matches against decisions (evaluation > financial > general)
+        4. Router forwards to selected backend (Qwen3 or Gemini)
+        5. Response includes routing_metadata (model, confidence, time)
+    
+    Backend Selection:
+        The router selects based on prompt content:
+        - Financial keywords ("stock", "PE ratio") → Qwen3 (llama.cpp, fast)
+        - Evaluation keywords ("evaluate", "judge") → Gemini (high-quality)
+        - Generation keywords ("generate", "synthetic") → Gemini (diverse)
+        - Other requests → Qwen3 (fallback)
     
     Args:
-        temperature: Temperature for response generation (default from config)
-        use_semantic_routing: If True, uses MoM for auto-routing (recommended).
-                             If False, uses default agent model directly.
+        temperature: Sampling temperature (default from config.model.agent_temperature)
+        use_semantic_routing: If True (default), uses model="MoM" for auto-routing.
+                             If False, uses explicit agent model (bypasses router logic).
         
     Returns:
-        Configured ChatOpenAI instance pointing to the semantic router
+        ChatOpenAI instance configured to use the semantic router.
+        All calls through this instance go through the router.
         
     Example:
-        # Semantic routing (recommended) - router decides model
+        # Create LLM with semantic routing (recommended)
         llm = create_llm()
         
-        # The router will analyze the prompt and route accordingly:
-        # - "What is AAPL's PE ratio?" → Qwen3 (financial_analysis)
-        # - "Evaluate this response..." → Gemini (evaluation)
+        # These prompts route to different models automatically:
+        llm.invoke("What is AAPL's PE ratio?")      # → Qwen3 (financial)
+        llm.invoke("Evaluate this response...")     # → Gemini (evaluation)
+        
+        # Bypass routing for debugging (direct to Qwen3)
+        llm_direct = create_llm(use_semantic_routing=False)
+        
+    See Also:
+        - config/router_config.yaml: Routing rules and signal configuration
+        - router/config.py: Router configuration generator
     """
     model = SEMANTIC_ROUTER_MODEL if use_semantic_routing else AGENT_MODEL
     
@@ -144,6 +239,12 @@ def generator_node(
     - Takes user query and generates draft response using yfinance tools
     - This is the primary "thinking" node that gathers data and drafts answers
     
+    Tool Binding:
+        Only the tools passed to this function are bound to the LLM.
+        ToolRAG pre-selects relevant tools for the query, and only those
+        tools are passed here. This ensures the agent operates with a
+        focused toolset rather than all 13+ available tools.
+    
     Semantic Routing:
         Uses model="MoM" with financial analysis intent markers.
         The router detects keywords like "stock", "price", "PE ratio" and
@@ -152,7 +253,7 @@ def generator_node(
     Args:
         state: Current agent state
         llm: Optional LLM instance (creates default if not provided)
-        tools: Optional list of tools to use
+        tools: Tools selected by ToolRAG to bind to LLM (falls back to CORE_TOOLS)
         
     Returns:
         State update with new message
@@ -241,23 +342,44 @@ def reflector_node(
     llm: Optional[ChatOpenAI] = None,
 ) -> Dict[str, Any]:
     """
-    Reflector Node:
+    Reflector Node (LLM-as-a-Judge):
     - Acts as "Senior Risk Analyst" critiquing the draft
     - Checks for hallucinations, advice violations, completeness
-    - Returns structured critique with pass/fail decision
+    - Scores response (0-10) and determines if revision needed
     
-    Semantic Routing:
-        Uses model="MoM" with evaluation intent markers.
-        The router detects keywords like "evaluate", "assess", "critique", "judge"
-        and semantic similarity to evaluation intent, then routes to Gemini 2.5 Pro
-        for high-quality response assessment.
+    This node implements the "reflection" step of the reflexive architecture.
+    It evaluates the generator's draft against the tool outputs (ground truth)
+    to catch errors before they reach the user.
+    
+    Semantic Routing to Gemini:
+        This node's prompts are designed to trigger the "evaluation" decision
+        in the router, which routes to Gemini 2.5 Pro for high-quality judging.
+        
+        Intent Markers Used:
+            "[EVALUATE] TASK: Assess and judge the quality..."
+            "evaluate this draft response for correctness, accuracy..."
+            
+        Why Gemini for Evaluation:
+            - Gemini 2.5 Pro excels at nuanced quality assessment
+            - Better at catching subtle errors than local models
+            - Provides structured, detailed feedback
+            
+        Router Decision Matching:
+            Keywords: "evaluate", "judge", "assess", "score", "accuracy"
+            Decision: evaluation (priority 15)
+            Routes to: gemini-2.5-pro
+    
+    Score Interpretation:
+        - Score >= 8.0: Response passes, no revision needed
+        - Score < 8.0: Response needs revision, goes to revisor_node
     
     Args:
-        state: Current agent state
-        llm: Optional LLM instance
+        state: Current agent state containing draft response and tool outputs
+        llm: Optional LLM instance (creates default with semantic routing)
         
     Returns:
-        State update with critique
+        State update with critique text, critique_passed boolean, and
+        incremented iteration_count
     """
     # Create LLM with semantic routing - router will detect evaluation intent
     # and route to Gemini 2.5 Pro for quality assessment
@@ -371,6 +493,11 @@ def revisor_node(
     - Takes the critique and generates an improved response
     - Addresses all issues raised by the reflector
     
+    Tool Binding:
+        Only the tools passed to this function are bound to the LLM.
+        These are the same tools selected by ToolRAG for the original query,
+        ensuring consistency between initial generation and revision.
+    
     Semantic Routing:
         Uses model="MoM" with financial analysis intent markers.
         The router detects this is a revision task for financial content
@@ -379,7 +506,7 @@ def revisor_node(
     Args:
         state: Current agent state
         llm: Optional LLM instance
-        tools: Optional list of tools to use
+        tools: Tools selected by ToolRAG to bind to LLM (falls back to CORE_TOOLS)
         
     Returns:
         State update with revised response

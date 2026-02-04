@@ -258,7 +258,26 @@ class AgentRunner:
         return create_agent(tools=tools)
     
     def _select_tools(self, query: str) -> List[Callable]:
-        """Select tools for a query using ToolRAG."""
+        """
+        Select tools for a query using ToolRAG semantic search.
+        
+        Only tools that meet the similarity threshold are selected and
+        subsequently bound to the LLM. This ensures the agent operates
+        with a focused set of relevant tools rather than all available tools.
+        
+        Args:
+            query: The user's financial query
+            
+        Returns:
+            List of selected tool callables to bind to the LLM.
+            Falls back to CORE_TOOLS if no tools meet threshold.
+            
+        Flow:
+            1. Query embedded via sentence-transformers
+            2. Compared against tool embeddings in ChromaDB
+            3. Tools with similarity >= threshold returned
+            4. These tools are then bound to generator/revisor nodes
+        """
         if not self.use_tool_rag or not self.tool_selector:
             return self.all_tools
         

@@ -2,7 +2,19 @@
 Tool Store - Vector database for tool definitions.
 
 Stores tool metadata and descriptions in a ChromaDB collection
-for semantic retrieval.
+for semantic retrieval. Tools are embedded using a query-centric format
+that prioritizes natural language use cases for better matching with
+user queries.
+
+Embedding Strategy:
+    Tools are embedded as: "[use cases] [keywords] [description]"
+    This format puts example queries first, ensuring high similarity
+    when user queries match the tool's intended use cases.
+
+Example:
+    User query: "What is AAPL's PE ratio?"
+    Tool embedding: "What is AAPL's PE ratio? Get the market cap... PE ratio..."
+    Result: High cosine similarity → tool selected
 """
 
 import json

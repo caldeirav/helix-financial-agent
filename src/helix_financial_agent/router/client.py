@@ -1,21 +1,59 @@
 """
 Semantic Router Client
 
-Client for interacting with the vLLM Semantic Router.
+Client for interacting with the vLLM Semantic Router (vLLM-SR).
 
-Architecture:
-- Router handles intelligent routing between models based on query semantics
-- Agent model (Qwen3-30B-A3B via llama.cpp) - for financial analysis
-- Judge model (Gemini 2.5 Pro via OpenAI-compatible API) - for evaluation/judging
+================================================================================
+ARCHITECTURE OVERVIEW
+================================================================================
 
-Gemini OpenAI compatibility: https://ai.google.dev/gemini-api/docs/openai
-- Base URL: https://generativelanguage.googleapis.com/v1beta/openai/
-- Auth: Authorization: Bearer $GEMINI_API_KEY
+The semantic router acts as an intelligent gateway between the application and
+multiple LLM backends. Instead of hardcoding model selection, the application
+sends all requests to the router with model="MoM" (Model of Models), and the
+router automatically selects the best model based on the request content.
 
-vLLM-SR Ports (per https://vllm-semantic-router.com/docs/api/router/):
-- 8801: HTTP entry point through Envoy (POST /v1/chat/completions)
-- 8889: Classification API (GET /v1/models, GET /health)
-- 9190: Prometheus metrics (GET /metrics)
+Request Flow:
+    Application → Router (model="MoM") → Analysis → Decision → Backend
+                                                                 ├─ Qwen3 (llama.cpp)
+                                                                 └─ Gemini API
+
+Signal Analysis:
+    The router extracts signals from the request content:
+    1. Keyword signals: Pattern matching for domain terms (e.g., "stock", "evaluate")
+    2. Embedding signals: Semantic similarity to intent candidates
+    
+    These signals are combined via priority-based decisions to select the model.
+
+Backend Models:
+    - Agent model: Qwen3-30B-A3B via llama.cpp (local, fast financial analysis)
+    - Judge model: Gemini 2.5 Pro via OpenAI-compatible API (evaluation/judging)
+
+================================================================================
+VLLM-SR PORTS
+================================================================================
+
+Per vLLM-SR documentation (https://vllm-semantic-router.com/docs/api/router/):
+    - 8801: HTTP entry point through Envoy (POST /v1/chat/completions)
+    - 8889: Classification API (GET /v1/models, GET /health)
+    - 9190: Prometheus metrics (GET /metrics)
+
+================================================================================
+USAGE IN THIS PROJECT
+================================================================================
+
+This client is primarily used for direct router interaction (health checks,
+metrics, model listing). For LLM calls, the agent uses LangChain's ChatOpenAI
+pointed at the router endpoint with model="MoM".
+
+See Also:
+    - agent/nodes.py: Where LLM calls are made with semantic routing
+    - router/config.py: Router configuration generation
+    - config/router_config.yaml: Active routing rules
+
+Gemini OpenAI Compatibility:
+    https://ai.google.dev/gemini-api/docs/openai
+    - Base URL: https://generativelanguage.googleapis.com/v1beta/openai/
+    - Auth: Authorization: Bearer $GEMINI_API_KEY
 """
 
 import httpx

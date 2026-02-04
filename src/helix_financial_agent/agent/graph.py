@@ -141,11 +141,22 @@ def build_reflexive_agent(
         - Router routes to Qwen3 (agent) or Gemini (judge) based on model
         - All tool calls go through MCP server (mandatory)
     
+    Tool Binding:
+        Only the tools passed to this function are bound to the LLM in
+        generator and revisor nodes. ToolRAG selects relevant tools based
+        on the user query, and only those selected tools are passed here.
+        This keeps the agent focused on relevant tools and reduces context size.
+        
+        Flow: Query → ToolRAG → Selected Tools → build_reflexive_agent(tools)
+              → generator.bind_tools(tools) & revisor.bind_tools(tools)
+    
     Args:
-        tools: Optional list of tools to use (default: CORE_TOOLS via MCP)
+        tools: List of tools to bind to LLM nodes. These should be the
+               tools selected by ToolRAG for the current query.
+               Falls back to CORE_TOOLS if None.
         
     Returns:
-        Compiled StateGraph
+        Compiled StateGraph with tools bound to generator and revisor nodes
     """
     tools = tools or CORE_TOOLS
     

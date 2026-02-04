@@ -4,16 +4,80 @@ Semantic Router Configuration
 Generates vLLM-SR configuration following the official documentation:
 https://vllm-semantic-router.com/docs/installation/configuration/
 
-Architecture:
-- Agent model (Qwen3-30B-A3B via llama.cpp) - for financial analysis tasks
-- Judge model (Gemini 2.5 Pro via OpenAI-compatible API) - for evaluation and data generation
-  See: https://ai.google.dev/gemini-api/docs/openai
+================================================================================
+CONFIGURATION STRUCTURE
+================================================================================
 
-vLLM-SR Ports (per documentation):
-- 8801: HTTP entry point through Envoy (OpenAI-compatible API)
-- 8889: Classification API (health, /v1/models)
-- 50051: gRPC ExtProc
-- 9190: Prometheus metrics
+The router configuration defines:
+
+1. BERT Model (Signal Extraction):
+    - sentence-transformers/all-MiniLM-L12-v2 for semantic similarity
+    - Used for embedding-based intent classification
+
+2. Listeners (Endpoints):
+    - HTTP (8801): Main chat completions endpoint (OpenAI-compatible)
+    - Classify (8889): Health checks and model listing
+    - Metrics (9190): Prometheus metrics
+
+3. vLLM Endpoints (Backend Models):
+    - llama_cpp_local: Qwen3-30B-A3B for financial analysis (fast, local)
+    - gemini_openai: Gemini 2.5 Pro for evaluation/generation (high-quality)
+
+4. Signals (Intent Detection):
+    - Keyword signals: Fast pattern matching (e.g., "stock", "PE ratio")
+    - Embedding signals: Semantic similarity to intent candidates
+
+5. Decisions (Routing Rules):
+    - Priority-ordered rules that combine signals to select models
+    - Higher priority decisions are checked first
+
+================================================================================
+HOW ROUTING WORKS
+================================================================================
+
+When a request arrives with model="MoM":
+
+1. Signal Extraction:
+    - Router scans for keyword matches (financial_keywords, evaluation_keywords)
+    - Router computes embedding similarity to intent candidates
+
+2. Decision Matching (priority order):
+    - evaluation (priority 15): "evaluate", "judge", "assess" → Gemini
+    - data_generation (priority 15): "generate", "synthetic" → Gemini
+    - financial_analysis (priority 10): "stock", "price", "PE ratio" → Qwen3
+    - general (priority 5): Fallback → Qwen3
+
+3. Request Forwarding:
+    - Router forwards to the selected backend
+    - Adds routing_metadata to response (model selected, confidence, etc.)
+
+================================================================================
+INTENT MARKERS
+================================================================================
+
+The agent uses intent markers in prompts to help the router classify requests:
+
+    "[FINANCIAL_ANALYSIS]" - Triggers financial_analysis decision → Qwen3
+    "[EVALUATE]"           - Triggers evaluation decision → Gemini
+    "[GENERATE]"           - Triggers data_generation decision → Gemini
+
+These markers work alongside natural keywords for robust classification.
+
+================================================================================
+FILES AND LOCATIONS
+================================================================================
+
+    - This module: Generates router_config.yaml
+    - Output file: config/router_config.yaml
+    - Router client: router/client.py
+    - LLM integration: agent/nodes.py (create_llm function)
+
+vLLM-SR Documentation:
+    - Configuration: https://vllm-semantic-router.com/docs/installation/configuration/
+    - Keyword routing: https://vllm-semantic-router.com/docs/tutorials/intelligent-route/keyword-routing/
+
+Gemini OpenAI Compatibility:
+    https://ai.google.dev/gemini-api/docs/openai
 
 Note: API keys are loaded from environment variables at runtime, NOT stored in config files.
 """

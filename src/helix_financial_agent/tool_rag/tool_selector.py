@@ -3,6 +3,21 @@ Tool Selector - Dynamic tool selection using ToolRAG.
 
 Analyzes user queries and selects the most relevant tools
 based on semantic similarity, then binds them to the agent.
+
+Key Design Principle:
+    Only selected tools are bound to the LLM. This keeps the agent
+    focused on relevant tools and prevents context bloat from
+    irrelevant tool schemas.
+
+Selection Flow:
+    1. User query is embedded via sentence-transformers
+    2. Query embedding compared against tool embeddings (ChromaDB)
+    3. Tools with similarity >= threshold are selected
+    4. Selected tools (or fallback core tools) are bound to LLM
+
+Fallback Behavior:
+    If no tools meet the similarity threshold, the selector falls
+    back to CORE_TOOLS to ensure the agent can still function.
 """
 
 from typing import List, Dict, Any, Optional, Callable

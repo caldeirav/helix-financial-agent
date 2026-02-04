@@ -86,7 +86,7 @@ class MCPConfig(BaseModel):
         default_factory=lambda: int(os.getenv("MCP_SERVER_PORT", "8000"))
     )
     transport: str = Field(
-        default_factory=lambda: os.getenv("MCP_TRANSPORT", "sse")
+        default_factory=lambda: os.getenv("MCP_TRANSPORT", "streamable-http")
     )
 
 
