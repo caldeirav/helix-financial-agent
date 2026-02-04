@@ -176,36 +176,91 @@ class ToolSelector:
         selected: List[Dict],
         threshold: float,
     ) -> None:
-        """Print tool selection details using rich."""
-        console.print("\n" + "=" * 60)
-        console.print("[bold cyan]🔧 TOOL SELECTION (ToolRAG)[/bold cyan]")
-        console.print("=" * 60)
-        console.print(f"[bold]Query:[/bold] {query}")
-        console.print(f"[bold]Threshold:[/bold] {threshold}")
+        """Print detailed tool selection information using rich."""
         console.print()
+        console.print("┏" + "━" * 78 + "┓")
+        console.print("┃" + " " * 25 + "[bold cyan]🎯 TOOLRAG SELECTION DETAILS[/bold cyan]" + " " * 24 + "┃")
+        console.print("┗" + "━" * 78 + "┛")
         
-        # Create results table
-        table = Table(show_header=True, header_style="bold magenta")
-        table.add_column("Tool", style="cyan")
-        table.add_column("Category", style="dim")
-        table.add_column("Similarity", justify="right")
-        table.add_column("Selected", justify="center")
+        # Configuration section
+        console.print("\n[bold yellow]📋 CONFIGURATION[/bold yellow]")
+        console.print(f"   Embedding Model: [cyan]{self.config.tool_rag.embedding_model}[/cyan]")
+        console.print(f"   Top-K Retrieved: [cyan]{self.top_k}[/cyan]")
+        console.print(f"   Similarity Threshold: [cyan]{threshold}[/cyan]")
+        console.print(f"   Total Tools in Store: [cyan]{len(self.tool_store._tools)}[/cyan]")
         
-        for match in all_matches:
+        # Query section
+        console.print("\n[bold yellow]🔍 QUERY ANALYSIS[/bold yellow]")
+        console.print(f"   Input Query: [white]\"{query}\"[/white]")
+        console.print(f"   Query Length: [dim]{len(query)} characters[/dim]")
+        
+        # Search results section
+        console.print("\n[bold yellow]📊 SEMANTIC SEARCH RESULTS[/bold yellow]")
+        console.print(f"   Retrieved {len(all_matches)} candidate tools from vector DB\n")
+        
+        # Detailed results for each tool
+        for i, match in enumerate(all_matches, 1):
             is_selected = match in selected
-            status = "✅" if is_selected else "❌"
-            sim_style = "green" if is_selected else "red"
+            status_icon = "✅" if is_selected else "❌"
+            status_reason = f"[green]SELECTED (similarity {match['similarity']:.3f} >= {threshold})[/green]" if is_selected else f"[red]REJECTED (similarity {match['similarity']:.3f} < {threshold})[/red]"
             
-            table.add_row(
-                match["name"],
-                match["category"],
-                f"[{sim_style}]{match['similarity']:.3f}[/{sim_style}]",
-                status,
-            )
+            # Tool header
+            console.print(f"   ┌─ {status_icon} [bold cyan]#{i} {match['name']}[/bold cyan] ({match['category']})")
+            
+            # Similarity score with visual bar
+            sim_pct = int(match['similarity'] * 100)
+            bar_filled = int(sim_pct / 5)  # 20 chars max
+            bar_empty = 20 - bar_filled
+            sim_color = "green" if is_selected else "red"
+            bar = f"[{sim_color}]{'█' * bar_filled}[/{sim_color}][dim]{'░' * bar_empty}[/dim]"
+            console.print(f"   │  Similarity: {bar} [{sim_color}]{match['similarity']:.4f}[/{sim_color}] ({sim_pct}%)")
+            
+            # Description (truncated)
+            desc = match.get('description', 'N/A')
+            if len(desc) > 100:
+                desc = desc[:100] + "..."
+            console.print(f"   │  Description: [dim]{desc}[/dim]")
+            
+            # Keywords
+            keywords = match.get('keywords', [])
+            if keywords:
+                kw_str = ", ".join(keywords[:6])
+                if len(keywords) > 6:
+                    kw_str += f" (+{len(keywords)-6} more)"
+                console.print(f"   │  Keywords: [dim]{kw_str}[/dim]")
+            
+            # Use cases (show first 2)
+            use_cases = match.get('use_cases', [])
+            if use_cases:
+                console.print(f"   │  Example queries: [dim]{use_cases[0]}[/dim]")
+                if len(use_cases) > 1:
+                    console.print(f"   │                   [dim]{use_cases[1]}[/dim]")
+            
+            # Selection decision
+            console.print(f"   └─ Decision: {status_reason}")
+            console.print()
         
-        console.print(table)
-        console.print(f"\n[bold]Selected {len(selected)} of {len(all_matches)} tools[/bold]")
-        console.print("=" * 60 + "\n")
+        # Summary section
+        selected_names = [s['name'] for s in selected]
+        rejected_names = [m['name'] for m in all_matches if m not in selected]
+        
+        console.print("[bold yellow]📝 SELECTION SUMMARY[/bold yellow]")
+        console.print(f"   ✅ Selected ({len(selected)}): [green]{', '.join(selected_names) if selected_names else 'None'}[/green]")
+        if rejected_names:
+            console.print(f"   ❌ Rejected ({len(rejected_names)}): [dim]{', '.join(rejected_names)}[/dim]")
+        
+        # Decision explanation
+        console.print("\n[bold yellow]💡 SELECTION RATIONALE[/bold yellow]")
+        if selected:
+            top_tool = selected[0]
+            console.print(f"   Top match '[cyan]{top_tool['name']}[/cyan]' selected because:")
+            console.print(f"   → Highest semantic similarity ({top_tool['similarity']:.4f}) to query")
+            console.print(f"   → Query keywords likely matched: {', '.join(top_tool.get('keywords', [])[:3])}")
+        else:
+            console.print(f"   [yellow]⚠️ No tools met the threshold ({threshold})[/yellow]")
+            console.print(f"   [dim]Consider lowering the threshold or rephrasing the query[/dim]")
+        
+        console.print("\n" + "─" * 80)
 
 
 # =============================================================================

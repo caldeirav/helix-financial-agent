@@ -91,7 +91,12 @@ class MCPClient:
             return {"error": f"MCP call failed: {str(e)}"}
     
     def list_tools(self) -> List[str]:
-        """Get list of available tools from the MCP server."""
+        """
+        Get list of available tools from the MCP server.
+        
+        Returns:
+            List of tool names, or empty list if unavailable
+        """
         try:
             payload = {
                 "jsonrpc": "2.0",
@@ -100,10 +105,14 @@ class MCPClient:
                 "id": 1,
             }
             
+            # FastMCP with streamable-http uses /mcp endpoint
             response = self.client.post(
-                f"{self.base_url}/mcp/v1/messages",
+                f"{self.base_url}/mcp",
                 json=payload,
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json, text/event-stream",
+                },
             )
             response.raise_for_status()
             
@@ -115,13 +124,46 @@ class MCPClient:
             console.print(f"[yellow]Warning: Could not list MCP tools: {e}[/yellow]")
             return []
     
-    def health_check(self) -> bool:
-        """Check if the MCP server is healthy."""
+    def health_check(self, min_tools: int = 1) -> bool:
+        """
+        Check if the MCP server is healthy by verifying tools are available.
+        
+        This performs a functional health check by calling the tools/list
+        JSON-RPC method and verifying that tools are registered.
+        
+        Args:
+            min_tools: Minimum number of tools expected (default: 1)
+            
+        Returns:
+            True if server responds with at least min_tools, False otherwise
+        """
         try:
-            response = self.client.get(f"{self.base_url}/health")
-            return response.status_code == 200
+            tools = self.list_tools()
+            return len(tools) >= min_tools
         except Exception:
             return False
+    
+    def health_check_detailed(self) -> Dict[str, Any]:
+        """
+        Perform a detailed health check returning tool information.
+        
+        Returns:
+            Dict with 'healthy' bool, 'tools' list, and 'tool_count' int
+        """
+        try:
+            tools = self.list_tools()
+            return {
+                "healthy": len(tools) > 0,
+                "tools": tools,
+                "tool_count": len(tools),
+            }
+        except Exception as e:
+            return {
+                "healthy": False,
+                "tools": [],
+                "tool_count": 0,
+                "error": str(e),
+            }
     
     def close(self):
         """Close the HTTP client."""

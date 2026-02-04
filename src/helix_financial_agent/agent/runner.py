@@ -31,7 +31,7 @@ from rich.tree import Tree
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from ..config import get_config
-from ..tools import CORE_TOOLS, check_mcp_server
+from ..tools import CORE_TOOLS, check_mcp_server, get_mcp_client
 from ..tool_rag import ToolSelector
 from .state import AgentState, create_initial_state
 from .graph import create_agent
@@ -87,7 +87,11 @@ def check_router_health() -> bool:
 def check_llama_server_health() -> bool:
     """Check if the llama.cpp server is healthy."""
     try:
-        base_url = config.model.llama_cpp_base_url.rstrip("/v1").rstrip("/")
+        # Use removesuffix instead of rstrip to avoid stripping port digits
+        base_url = config.model.llama_cpp_base_url
+        if base_url.endswith("/v1"):
+            base_url = base_url[:-3]  # Remove "/v1" suffix
+        base_url = base_url.rstrip("/")
         health_url = f"{base_url}/health"
         with httpx.Client(timeout=5.0) as client:
             response = client.get(health_url)
@@ -96,39 +100,74 @@ def check_llama_server_health() -> bool:
         return False
 
 
-def verify_required_services(check_mcp: bool = True, check_router: bool = True) -> None:
+def verify_required_services(check_mcp: bool = True, check_router: bool = True, verbose: bool = True) -> Dict[str, Any]:
     """
     Verify that all required services are running.
     
     Args:
         check_mcp: Whether to check MCP server
         check_router: Whether to check semantic router
+        verbose: Whether to print status messages
+        
+    Returns:
+        Dict with service status information including MCP tools list
         
     Raises:
         ServiceError: If any required service is not available
     """
     errors = []
+    service_info = {
+        "llama_cpp": False,
+        "router": False,
+        "mcp": False,
+        "mcp_tools": [],
+    }
     
     # Check llama.cpp server
-    if not check_llama_server_health():
+    if check_llama_server_health():
+        service_info["llama_cpp"] = True
+    else:
         errors.append(
             f"llama.cpp server not responding at {config.model.llama_cpp_base_url}\n"
             "   Start with: ./scripts/start_llama_server.sh"
         )
     
     # Check semantic router
-    if check_router and not check_router_health():
-        errors.append(
-            f"Semantic router not responding at {config.router.router_host}:{config.router.router_classify_port}\n"
-            "   Start with: ./scripts/start_router.sh"
-        )
+    if check_router:
+        if check_router_health():
+            service_info["router"] = True
+        else:
+            errors.append(
+                f"Semantic router not responding at {config.router.router_host}:{config.router.router_classify_port}\n"
+                "   Start with: ./scripts/start_router.sh"
+            )
+    else:
+        service_info["router"] = None  # Not checked
     
-    # Check MCP server
-    if check_mcp and not check_mcp_server():
-        errors.append(
-            f"MCP server not responding at {config.mcp.host}:{config.mcp.port}\n"
-            "   Start with: ./scripts/start_mcp_server.sh"
-        )
+    # Check MCP server with detailed health check
+    if check_mcp:
+        mcp_client = get_mcp_client()
+        mcp_health = mcp_client.health_check_detailed()
+        
+        if mcp_health["healthy"]:
+            service_info["mcp"] = True
+            service_info["mcp_tools"] = mcp_health["tools"]
+            service_info["mcp_tool_count"] = mcp_health["tool_count"]
+            
+            if verbose:
+                console.print(f"[green]✅ MCP server healthy with {mcp_health['tool_count']} tools available:[/green]")
+                # Display tools in a compact format
+                tools_str = ", ".join(mcp_health["tools"])
+                console.print(f"   [cyan]{tools_str}[/cyan]")
+        else:
+            error_msg = mcp_health.get("error", "No tools available")
+            errors.append(
+                f"MCP server not functional at {config.mcp.host}:{config.mcp.port}\n"
+                f"   Error: {error_msg}\n"
+                "   Start with: ./scripts/start_mcp_server.sh"
+            )
+    else:
+        service_info["mcp"] = None  # Not checked
     
     if errors:
         error_msg = "\n\n".join(errors)
@@ -138,6 +177,8 @@ def verify_required_services(check_mcp: bool = True, check_router: bool = True) 
             border_style="red"
         ))
         raise ServiceError("Required services not running. See above for details.")
+    
+    return service_info
 
 
 class AgentRunner:

@@ -16,9 +16,11 @@ from ..config import get_config
 config = get_config()
 
 # Create FastMCP server instance
+# stateless_http=True enables simple JSON-RPC requests without session management
 mcp = FastMCP(
     name="Helix Financial Tools",
-    instructions="Financial data tools powered by yfinance for stock analysis, fundamentals, and market data"
+    instructions="Financial data tools powered by yfinance for stock analysis, fundamentals, and market data",
+    stateless_http=True,
 )
 
 
@@ -508,7 +510,11 @@ def main():
     print(f"   Host: {config.mcp.host}")
     print(f"   Port: {config.mcp.port}")
     print(f"   Transport: {config.mcp.transport}")
-    mcp.run()
+    mcp.run(
+        transport=config.mcp.transport,
+        host=config.mcp.host,
+        port=config.mcp.port,
+    )
 
 
 if __name__ == "__main__":
