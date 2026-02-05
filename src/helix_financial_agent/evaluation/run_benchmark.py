@@ -34,6 +34,7 @@ from rich.table import Table
 
 from ..config import get_config
 from ..agent import run_agent
+from ..agent.runner import verify_required_services
 from ..tracing import setup_mlflow_tracing, TracingContext
 from ..verbose_logging import VerboseLogger, get_logger, reset_logger
 from .judge import GeminiJudge
@@ -182,6 +183,15 @@ class BenchmarkRunner:
                 console.print(f"   Verbose Logging: ENABLED")
             console.print("=" * 60)
             
+            # Pre-check all required services once before the benchmark loop
+            console.print("\n[cyan]🔍 Checking required services...[/cyan]")
+            try:
+                service_info = verify_required_services(check_mcp=True, check_router=True, verbose=True)
+                console.print("[green]✅ All required services are running[/green]")
+            except Exception as e:
+                console.print(f"[red]❌ Service check failed: {e}[/red]")
+                raise
+            
             benchmark_start = time.time()
             
             for i, query_item in enumerate(dataset):
@@ -190,17 +200,17 @@ class BenchmarkRunner:
                 subcategory = query_item.get("subcategory", "")
                 expected_tools = query_item.get("expected_tools", [])
                 
-                # Log query start
+                # Log query start (show full query, not truncated)
                 self.logger.log_flow(f"Query [{i+1}/{total}]", {
                     "category": category,
                     "subcategory": subcategory,
-                    "query_preview": query[:100],
+                    "query": query,  # Full query
                     "expected_tools": expected_tools,
                 })
                 
                 if verbose:
                     console.print(f"\n[bold]Query [{i+1}/{total}][/bold] [{category}/{subcategory}]")
-                    console.print(f"  {query[:80]}...")
+                    console.print(f"  {query}")  # Full query
                 
                 try:
                     # Log agent request
@@ -211,6 +221,8 @@ class BenchmarkRunner:
                     )
                     
                     # Run agent with metadata for assessment tracking
+                    # Pass the logger so ToolRAG can log tool selection details
+                    # Skip service check since we verified services at benchmark start
                     start_time = time.time()
                     agent_result = run_agent(
                         query,
@@ -219,6 +231,8 @@ class BenchmarkRunner:
                         run_evaluation=True,  # Enable evaluation for assessments
                         query_metadata=query_item,
                         enable_tracing=self.enable_tracing,
+                        logger=self.logger,  # Pass logger for tool selection output
+                        skip_service_check=True,  # Services already verified at start
                     )
                     agent_time = time.time() - start_time
                     

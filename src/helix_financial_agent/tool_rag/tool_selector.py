@@ -18,9 +18,13 @@ Selection Flow:
 Fallback Behavior:
     If no tools meet the similarity threshold, the selector falls
     back to CORE_TOOLS to ensure the agent can still function.
+
+Logging:
+    Integrates with VerboseLogger for benchmark output.
+    Shows all tools ranked by similarity with selection status.
 """
 
-from typing import List, Dict, Any, Optional, Callable
+from typing import List, Dict, Any, Optional, Callable, TYPE_CHECKING
 import json
 
 from rich.console import Console
@@ -28,6 +32,9 @@ from rich.table import Table
 
 from ..config import get_config
 from .tool_store import ToolStore, create_default_tool_store
+
+if TYPE_CHECKING:
+    from ..verbose_logging import VerboseLogger
 
 console = Console()
 
@@ -38,12 +45,18 @@ class ToolSelector:
     
     The selector uses ToolRAG to find tools most relevant to the
     user's query, filtering out irrelevant "distraction" tools.
+    
+    Integrates with VerboseLogger for benchmark output showing:
+    - All tools ranked by similarity score
+    - Selection status (selected vs rejected)
+    - Accuracy vs expected tools (when provided)
     """
     
     def __init__(
         self,
         tool_store: Optional[ToolStore] = None,
         tool_registry: Optional[Dict[str, Callable]] = None,
+        logger: Optional["VerboseLogger"] = None,
     ):
         """
         Initialize the tool selector.
@@ -51,14 +64,17 @@ class ToolSelector:
         Args:
             tool_store: Optional pre-initialized tool store
             tool_registry: Optional mapping of tool names to callables
+            logger: Optional VerboseLogger for benchmark output
         """
         self.config = get_config()
         self.tool_store = tool_store or create_default_tool_store()
         self.tool_registry = tool_registry or {}
+        self.logger = logger
         
         # Selection parameters
         self.top_k = self.config.tool_rag.top_k
         self.threshold = self.config.tool_rag.threshold
+        self.max_tools = self.config.tool_rag.max_tools
     
     def register_tool(self, name: str, func: Callable) -> None:
         """Register a callable tool function."""
@@ -68,13 +84,19 @@ class ToolSelector:
         """Register multiple callable tool functions."""
         self.tool_registry.update(tools)
     
+    def set_logger(self, logger: "VerboseLogger") -> None:
+        """Set the VerboseLogger for benchmark output."""
+        self.logger = logger
+    
     def select_tools(
         self,
         query: str,
         top_k: Optional[int] = None,
         threshold: Optional[float] = None,
+        max_tools: Optional[int] = None,
         verbose: bool = False,
         show_all_tools: bool = True,
+        expected_tools: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Select relevant tools for a query.
@@ -83,13 +105,16 @@ class ToolSelector:
             query: The user's query
             top_k: Number of tools to retrieve (default from config, or all if show_all_tools=True)
             threshold: Minimum similarity threshold (default from config)
-            verbose: Whether to print selection details
+            max_tools: Maximum number of tools to select (prevents context overflow)
+            verbose: Whether to print selection details (rich console output)
             show_all_tools: If True, search and display all tools (not just top_k)
+            expected_tools: Optional list of expected tool names for accuracy logging
             
         Returns:
             List of selected tool info dicts
         """
         threshold = threshold or self.threshold
+        max_tools = max_tools or self.max_tools
         
         # Search for ALL tools if show_all_tools is True, otherwise use top_k
         total_tools = len(self.tool_store._tools)
@@ -99,8 +124,24 @@ class ToolSelector:
         matches = self.tool_store.search(query, top_k=search_k)
         
         # Filter by threshold
-        selected = [m for m in matches if m["similarity"] >= threshold]
+        above_threshold = [m for m in matches if m["similarity"] >= threshold]
         
+        # Limit to max_tools (take highest similarity)
+        selected = above_threshold[:max_tools] if max_tools else above_threshold
+        
+        # Log to VerboseLogger if available (for benchmark output)
+        if self.logger:
+            self.logger.log_tool_selection(
+                query=query,
+                all_matches=matches,
+                selected=selected,
+                threshold=threshold,
+                expected_tools=expected_tools,
+                max_tools=max_tools,
+                above_threshold_count=len(above_threshold),
+            )
+        
+        # Also print detailed selection if verbose (for interactive use)
         if verbose:
             self._print_selection(query, matches, selected, threshold)
         
@@ -112,6 +153,7 @@ class ToolSelector:
         top_k: Optional[int] = None,
         threshold: Optional[float] = None,
         verbose: bool = False,
+        expected_tools: Optional[List[str]] = None,
     ) -> List[Callable]:
         """
         Get callable tool functions for a query.
@@ -121,11 +163,15 @@ class ToolSelector:
             top_k: Number of tools to retrieve
             threshold: Minimum similarity threshold
             verbose: Whether to print selection details
+            expected_tools: Optional list of expected tool names for accuracy logging
             
         Returns:
             List of callable tool functions
         """
-        selected = self.select_tools(query, top_k, threshold, verbose)
+        selected = self.select_tools(
+            query, top_k, threshold, verbose, 
+            expected_tools=expected_tools
+        )
         
         tools = []
         for tool_info in selected:

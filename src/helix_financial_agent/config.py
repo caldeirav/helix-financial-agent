@@ -102,6 +102,9 @@ class ToolRAGConfig(BaseModel):
     threshold: float = Field(
         default_factory=lambda: float(os.getenv("TOOL_RAG_THRESHOLD", "0.35"))
     )
+    max_tools: int = Field(
+        default_factory=lambda: int(os.getenv("TOOL_RAG_MAX_TOOLS", "4"))
+    )
 
 
 class AgentConfig(BaseModel):

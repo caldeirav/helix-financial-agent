@@ -18,6 +18,7 @@ Example:
 """
 
 import json
+import os
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -27,6 +28,20 @@ from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 
 from ..config import get_config
+
+
+def _ensure_hf_token():
+    """Ensure HF_TOKEN is set from config before loading models."""
+    # Load from .env if not already set
+    if not os.environ.get("HF_TOKEN"):
+        from dotenv import load_dotenv
+        load_dotenv()
+    
+    # Also set HUGGING_FACE_HUB_TOKEN for sentence-transformers
+    hf_token = os.environ.get("HF_TOKEN")
+    if hf_token:
+        os.environ["HUGGING_FACE_HUB_TOKEN"] = hf_token
+        os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "0"
 
 
 @dataclass
@@ -111,8 +126,14 @@ class ToolStore:
         """
         config = get_config()
         
-        # Initialize embedding model
-        self.embedding_model = SentenceTransformer(config.tool_rag.embedding_model)
+        # Ensure HF token is set before loading model
+        _ensure_hf_token()
+        
+        # Initialize embedding model (suppress progress bar noise)
+        self.embedding_model = SentenceTransformer(
+            config.tool_rag.embedding_model,
+            token=os.environ.get("HF_TOKEN"),
+        )
         
         # Initialize ChromaDB
         if persist_directory:
@@ -243,45 +264,105 @@ DEFAULT_TOOL_DEFINITIONS = [
     # Core Tools
     ToolDefinition(
         name="get_stock_fundamentals",
-        description="Retrieves fundamental data for a given stock ticker including PE ratios, market cap, dividend yield, sector, business summary, and company info.",
+        description="Retrieves fundamental data for a given stock ticker including PE ratios, PEG ratio, Price-to-Sales (P/S), Price-to-Book (P/B), market cap, dividend yield, EPS, sector, business summary, and company info.",
         parameters={"ticker": {"type": "string", "description": "Stock symbol like AAPL, NVDA, MSFT"}},
         category="core",
-        keywords=["PE ratio", "market cap", "fundamentals", "valuation", "dividend", "sector", "beta", "52-week", "price"],
+        keywords=[
+            "PE ratio", "P/E", "PEG ratio", "Price-to-Sales", "P/S ratio", "Price-to-Book", "P/B ratio",
+            "market cap", "fundamentals", "valuation", "dividend yield", "sector", "beta", 
+            "52-week high", "52-week low", "current price", "stock price", "EPS", "earnings per share",
+            "forward PE", "trailing PE", "enterprise value", "book value"
+        ],
         use_cases=[
+            # Basic fundamentals
             "What is AAPL's PE ratio?",
             "Get the market cap of NVDA",
             "What sector is MSFT in?",
             "Tell me about GOOGL's dividend yield",
             "What is the current price of TSLA?",
+            # Valuation ratios
+            "What is the PEG ratio for WMT?",
+            "Show me the Price-to-Sales ratio for AMZN",
+            "Provide a side-by-side of the PEG ratio and Price-to-Sales ratio",
+            "What is the P/B ratio?",
+            "List the PE ratio and dividend yield",
+            # Comparative queries
+            "Compare valuation metrics for a stock",
+            "Get key financial ratios for analysis",
+            "What are the fundamental metrics?",
         ],
     ),
     ToolDefinition(
         name="get_historical_prices",
-        description="Fetches historical price data including Open, High, Low, Close, Volume for technical analysis and performance tracking.",
+        description="Fetches historical price data including Open, High, Low, Close, Volume for technical analysis, moving averages, volatility calculations, and performance tracking.",
         parameters={
             "ticker": {"type": "string", "description": "Stock symbol"},
             "period": {"type": "string", "description": "Time period: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, ytd, max"},
         },
         category="core",
-        keywords=["price history", "historical", "OHLCV", "returns", "moving average", "SMA", "volatility", "performance"],
+        keywords=[
+            "price history", "historical prices", "OHLCV", "returns", "moving average", 
+            "SMA", "EMA", "50-day", "200-day", "volatility", "performance", "price data",
+            "daily prices", "closing price", "open price", "high low", "volume",
+            "30-day", "90-day", "standard deviation", "price change", "YTD return"
+        ],
         use_cases=[
+            # Returns and performance
             "What's AAPL's YTD return?",
             "Show price history for NVDA",
-            "Calculate the 20-day moving average for MSFT",
             "What was TSLA's highest price this month?",
+            # Moving averages - many variations
+            "Calculate the 20-day moving average for MSFT",
+            "How far apart are the 50-day and 200-day moving averages?",
+            "What is the 200-day moving average for AAPL?",
+            "Show the 50-day and 200-day moving average difference",
+            "Calculate moving average crossover",
+            # Volatility - many variations
+            "Calculate the 90-day volatility for pharmaceutical stocks",
+            "What is the volatility of this stock?",
+            "Calculate and list the volatility for BMY TMO AMGN",
+            "Show historical volatility calculation",
+            "What is the standard deviation of returns?",
+            # General historical data
+            "Show me the historical closing prices",
+            "Get daily price data for the last month",
+            "What were the prices over the past year?",
         ],
     ),
     ToolDefinition(
         name="get_financial_statements",
-        description="Retrieves balance sheet, income statement, and cash flow statement data for financial analysis.",
+        description="Retrieves balance sheet, income statement, and cash flow statement data for financial analysis including total debt, assets, liabilities, revenue, and cash flows.",
         parameters={"ticker": {"type": "string", "description": "Stock symbol"}},
         category="core",
-        keywords=["revenue", "income", "balance sheet", "cash flow", "debt", "assets", "liabilities", "EBITDA", "net income"],
+        keywords=[
+            "revenue", "income statement", "balance sheet", "cash flow statement", "total debt",
+            "total assets", "total liabilities", "EBITDA", "net income", "operating income",
+            "10-K", "10-Q", "quarterly report", "annual report", "financial report",
+            "free cash flow", "operating cash flow", "long-term debt", "short-term debt",
+            "shareholders equity", "retained earnings", "gross profit"
+        ],
         use_cases=[
+            # Revenue and income
             "What is AAPL's total revenue?",
+            "Get the income statement data",
+            "Show quarterly revenue figures",
+            # Debt queries - many variations
             "How much debt does MSFT have?",
+            "Find the total debt for Morgan Stanley",
+            "Can you find the total debt as of their latest financial report?",
+            "What is the company's long-term debt?",
+            # Cash flow
             "Get GOOGL's cash flow statement",
+            "I need to see the statement of cash flows from their 10-K filing",
+            "Show the cash flow statement from the most recent 10-K",
+            "What is free cash flow?",
+            # Balance sheet
             "What are NVDA's total assets?",
+            "Show me the balance sheet for the latest quarter",
+            "What is the company's total liabilities?",
+            # General financial statements
+            "Get financial statement data",
+            "Show me the latest 10-K financials",
         ],
     ),
     ToolDefinition(
@@ -289,11 +370,13 @@ DEFAULT_TOOL_DEFINITIONS = [
         description="Fetches latest news headlines and links for a company to understand recent events and sentiment.",
         parameters={"ticker": {"type": "string", "description": "Stock symbol"}},
         category="core",
-        keywords=["news", "headlines", "events", "sentiment", "announcements", "press", "media"],
+        keywords=["news", "headlines", "events", "sentiment", "announcements", "press", "media", "articles", "recent news"],
         use_cases=[
             "What's the latest news on AAPL?",
             "Any recent announcements from TSLA?",
             "Why is NVDA stock moving today?",
+            "Get recent news articles for a company",
+            "Show me headlines about the stock",
         ],
     ),
     
@@ -384,16 +467,22 @@ DEFAULT_TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name="calculate_technical_indicators",
-        description="Calculates advanced technical indicators like RSI, MACD, Bollinger Bands.",
+        description="Calculates advanced technical indicators like RSI, MACD, Bollinger Bands, ATR, and other momentum/volatility indicators.",
         parameters={
             "ticker": {"type": "string", "description": "Stock symbol"},
             "indicators": {"type": "array", "description": "List of indicators"},
         },
         category="distraction",
-        keywords=["RSI", "MACD", "Bollinger", "technical", "indicators", "momentum"],
+        keywords=[
+            "RSI", "MACD", "Bollinger Bands", "technical indicators", "momentum", 
+            "ATR", "average true range", "stochastic", "Williams %R", "CCI",
+            "relative strength index", "signal line", "histogram"
+        ],
         use_cases=[
             "Calculate RSI for AAPL",
             "What's the MACD signal for TSLA?",
+            "Show Bollinger Bands for NVDA",
+            "What is the ATR indicator?",
         ],
     ),
     ToolDefinition(
@@ -413,16 +502,52 @@ DEFAULT_TOOL_DEFINITIONS = [
 ]
 
 
-def create_default_tool_store(persist_directory: Optional[str] = None) -> ToolStore:
+# =============================================================================
+# SINGLETON TOOL STORE - Caches embedding model and tool embeddings
+# =============================================================================
+
+_cached_tool_store: Optional[ToolStore] = None
+_cached_persist_directory: Optional[str] = None
+
+
+def create_default_tool_store(persist_directory: Optional[str] = None, force_reload: bool = False) -> ToolStore:
     """
-    Create a tool store with default tool definitions.
+    Create or return cached tool store with default tool definitions.
+    
+    Uses singleton pattern to avoid reloading the embedding model and 
+    re-computing tool embeddings on every query. This significantly speeds
+    up benchmark runs.
     
     Args:
         persist_directory: Optional path to persist the database
+        force_reload: If True, forces recreation of the tool store
         
     Returns:
-        Initialized ToolStore with all tools
+        Initialized ToolStore with all tools (cached after first call)
     """
+    global _cached_tool_store, _cached_persist_directory
+    
+    # Return cached store if available and directory matches
+    if (
+        _cached_tool_store is not None 
+        and not force_reload 
+        and _cached_persist_directory == persist_directory
+    ):
+        return _cached_tool_store
+    
+    # Create new store
     store = ToolStore(persist_directory=persist_directory)
     store.add_tools(DEFAULT_TOOL_DEFINITIONS)
+    
+    # Cache it
+    _cached_tool_store = store
+    _cached_persist_directory = persist_directory
+    
     return store
+
+
+def reset_tool_store_cache():
+    """Reset the cached tool store (useful for testing)."""
+    global _cached_tool_store, _cached_persist_directory
+    _cached_tool_store = None
+    _cached_persist_directory = None

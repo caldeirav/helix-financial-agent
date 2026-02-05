@@ -50,6 +50,7 @@ from ..tracing import (
     evaluate_model_selection,
     is_tracing_enabled,
 )
+from ..verbose_logging import VerboseLogger
 from .state import AgentState, create_initial_state
 from .graph import create_agent
 
@@ -228,6 +229,7 @@ class AgentRunner:
         skip_service_check: bool = False,
         run_evaluation: bool = False,
         enable_tracing: bool = True,
+        logger: Optional[VerboseLogger] = None,
     ):
         """
         Initialize the agent runner.
@@ -239,12 +241,14 @@ class AgentRunner:
             skip_service_check: Skip service verification (for testing only)
             run_evaluation: Whether to run LLM-as-a-Judge evaluation after response
             enable_tracing: Whether to enable MLflow tracing (default: True)
+            logger: Optional VerboseLogger for benchmark output
         """
         self.all_tools = tools or CORE_TOOLS
         self.use_tool_rag = use_tool_rag
         self.verbose = verbose
         self.run_evaluation = run_evaluation
         self.enable_tracing = enable_tracing
+        self.logger = logger
         
         # Initialize MLflow tracing
         if enable_tracing:
@@ -254,13 +258,13 @@ class AgentRunner:
         if not skip_service_check:
             if verbose:
                 console.print("\n[cyan]🔍 Checking required services...[/cyan]")
-            verify_required_services(check_mcp=True, check_router=True)
+            verify_required_services(check_mcp=True, check_router=True, verbose=verbose)
             if verbose:
                 console.print("[green]✅ All required services are running[/green]")
         
         # Initialize tool selector if using ToolRAG
         if use_tool_rag:
-            self.tool_selector = ToolSelector()
+            self.tool_selector = ToolSelector(logger=logger)
             # Register tools
             for tool in self.all_tools:
                 # Handle both regular functions and LangChain StructuredTool objects
@@ -287,7 +291,7 @@ class AgentRunner:
         # Router is always used - no option to disable
         return create_agent(tools=tools)
     
-    def _select_tools(self, query: str) -> List[Callable]:
+    def _select_tools(self, query: str, expected_tools: Optional[List[str]] = None) -> List[Callable]:
         """
         Select tools for a query using ToolRAG semantic search.
         
@@ -297,6 +301,7 @@ class AgentRunner:
         
         Args:
             query: The user's financial query
+            expected_tools: Optional list of expected tool names (for logging accuracy)
             
         Returns:
             List of selected tool callables to bind to the LLM.
@@ -312,7 +317,9 @@ class AgentRunner:
             return self.all_tools
         
         selected = self.tool_selector.get_tools_for_query(
-            query, verbose=self.verbose
+            query, 
+            verbose=self.verbose,
+            expected_tools=expected_tools,
         )
         
         # If no tools selected, fall back to core tools
@@ -363,7 +370,10 @@ class AgentRunner:
             console.print("[bold magenta]🎯 PHASE 1: TOOL SELECTION (ToolRAG)[/bold magenta]")
             console.print("─" * 70)
         
-        selected_tools = self._select_tools(query)
+        # Extract expected tools from metadata for accuracy logging
+        expected_tools = query_metadata.get("expected_tools", []) if query_metadata else []
+        
+        selected_tools = self._select_tools(query, expected_tools=expected_tools)
         selected_tool_names = [getattr(t, "name", None) or getattr(t, "__name__", str(t)) for t in selected_tools]
         
         trace_log.append({
@@ -389,6 +399,7 @@ class AgentRunner:
         iterations = 0
         total_steps = 0
         reflections = []
+        routed_models = []  # Track which models were used
         
         if self.verbose:
             console.print("\n" + "─" * 70)
@@ -438,26 +449,46 @@ class AgentRunner:
                         step_log["data"]["tool_output"] = all_tool_outputs[-1]
                     
                     elif isinstance(msg, AIMessage) and msg.content:
+                        # Extract routing metadata from response
+                        response_metadata = getattr(msg, 'response_metadata', {}) or {}
+                        model_name = (
+                            response_metadata.get('model_name') or 
+                            response_metadata.get('model') or
+                            response_metadata.get('routing_metadata', {}).get('selected_model')
+                        )
+                        if model_name:
+                            routed_models.append(model_name)
+                        
                         if msg.content.startswith("[REFLECTION]"):
                             content = msg.content.replace("[REFLECTION]: ", "")
                             reflections.append({
                                 "content": content,
                                 "step": step + 1,
-                                "iteration": iterations
+                                "iteration": iterations,
+                                "model": model_name,
                             })
                             step_log["data"]["reflection"] = reflections[-1]
                         else:
                             all_ai_responses.append({
                                 "content": msg.content,
-                                "step": step + 1
+                                "step": step + 1,
+                                "model": model_name,
                             })
-                            step_log["data"]["response"] = {"preview": msg.content[:200]}
+                            step_log["data"]["response"] = {"preview": msg.content[:200], "model": model_name}
             
             trace_log.append(step_log)
         
         # Get final response
         final_response = all_ai_responses[-1]["content"] if all_ai_responses else None
         elapsed_time = time.time() - start_time
+        
+        # Determine the primary routed model (most common or last used)
+        routed_model = None
+        if routed_models:
+            # Use the most frequently used model, or the first one
+            from collections import Counter
+            model_counts = Counter(routed_models)
+            routed_model = model_counts.most_common(1)[0][0] if model_counts else routed_models[0]
         
         # Compile result
         result = {
@@ -474,6 +505,8 @@ class AgentRunner:
             "total_steps": total_steps,
             "reflections": reflections,
             "trace": trace_log,
+            "routed_model": routed_model,
+            "routed_models": routed_models,  # All models used during execution
         }
         
         # Run evaluation if enabled
@@ -903,6 +936,8 @@ def run_agent(
     run_evaluation: bool = False,
     query_metadata: Optional[Dict] = None,
     enable_tracing: bool = True,
+    logger: Optional[VerboseLogger] = None,
+    skip_service_check: bool = False,
 ) -> Dict[str, Any]:
     """
     Convenience function to run the agent on a query.
@@ -927,6 +962,8 @@ def run_agent(
         run_evaluation: Whether to run LLM-as-a-Judge evaluation
         query_metadata: Optional metadata (category, subcategory, expected_tools)
         enable_tracing: Whether to enable MLflow tracing (default: True)
+        logger: Optional VerboseLogger for benchmark output
+        skip_service_check: Skip service verification (use when already checked)
         
     Returns:
         Dict with query, response, metrics, evaluation (if enabled), assessments, trace_id, etc.
@@ -939,6 +976,8 @@ def run_agent(
         use_tool_rag=use_tool_rag,
         run_evaluation=run_evaluation,
         enable_tracing=enable_tracing,
+        logger=logger,
+        skip_service_check=skip_service_check,
     )
     return runner.run(query, thread_id=thread_id, query_metadata=query_metadata)
 

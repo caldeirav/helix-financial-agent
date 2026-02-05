@@ -197,7 +197,8 @@ class VerboseLogger:
         # Print details if any
         if entry.details:
             for key, value in entry.details.items():
-                if isinstance(value, str) and len(value) > 100:
+                # Don't truncate query and expected_tools fields
+                if isinstance(value, str) and len(value) > 100 and key not in ("query", "expected_tools"):
                     value = self._truncate(value, 100)
                 console.print(f"           └─ {key}: {value}")
     
@@ -349,7 +350,164 @@ class VerboseLogger:
         self._log(level, "routing", event, details)
     
     # =========================================================================
-    # TOOL LOGGING
+    # TOOL SELECTION LOGGING (ToolRAG)
+    # =========================================================================
+    
+    def log_tool_selection(
+        self,
+        query: str,
+        all_matches: List[Dict[str, Any]],
+        selected: List[Dict[str, Any]],
+        threshold: float,
+        expected_tools: Optional[List[str]] = None,
+        max_tools: Optional[int] = None,
+        above_threshold_count: Optional[int] = None,
+    ):
+        """
+        Log ToolRAG tool selection results.
+        
+        Args:
+            query: The user's query
+            all_matches: All tools with their similarity scores
+            selected: Tools that passed the threshold
+            threshold: The similarity threshold used
+            expected_tools: Optional list of expected tool names for accuracy check
+            max_tools: Maximum tools limit that was applied
+            above_threshold_count: Number of tools above threshold before max_tools limit
+        """
+        selected_names = [s["name"] for s in selected]
+        
+        # Calculate selection accuracy if expected tools provided
+        accuracy_info = {}
+        if expected_tools:
+            expected_set = set(expected_tools)
+            selected_set = set(selected_names)
+            true_positives = selected_set & expected_set
+            false_negatives = expected_set - selected_set
+            
+            accuracy_info = {
+                "expected": expected_tools,
+                "matched": list(true_positives),
+                "missing": list(false_negatives),
+                "accuracy": f"{len(true_positives)}/{len(expected_set)}" if expected_set else "N/A",
+            }
+        
+        # Build log details
+        log_details = {
+            "threshold": threshold,
+            "total_tools": len(all_matches),
+            "selected_count": len(selected),
+            "selected_tools": ", ".join(selected_names) if selected_names else "None",
+        }
+        
+        # Add max_tools info if capping was applied
+        if max_tools and above_threshold_count and above_threshold_count > len(selected):
+            log_details["max_tools"] = max_tools
+            log_details["above_threshold"] = above_threshold_count
+        
+        # Log summary
+        self._log(LogLevel.INFO, "tool", "ToolRAG Selection", log_details)
+        
+        # Log each tool's similarity in verbose mode
+        if self.verbose:
+            self._print_tool_selection_table(
+                all_matches, selected, threshold, accuracy_info,
+                max_tools=max_tools, above_threshold_count=above_threshold_count
+            )
+    
+    def _print_tool_selection_table(
+        self,
+        all_matches: List[Dict[str, Any]],
+        selected: List[Dict[str, Any]],
+        threshold: float,
+        accuracy_info: Dict[str, Any],
+        max_tools: Optional[int] = None,
+        above_threshold_count: Optional[int] = None,
+    ):
+        """Print a formatted table of tool selection results."""
+        selected_names = set(s["name"] for s in selected)
+        
+        # Column widths (adjusted to fit tool names properly)
+        col_rank = 3
+        col_name = 35
+        col_sim = 8
+        col_status = 7
+        col_cat = 10
+        total_width = col_rank + col_name + col_sim + col_status + col_cat + 14  # +14 for borders and padding
+        
+        console.print()
+        console.print("┌" + "─" * (total_width - 2) + "┐")
+        title = "🎯 TOOLRAG SELECTION"
+        padding = (total_width - 2 - len(title) - 8) // 2  # -8 for markup characters
+        console.print("│" + " " * padding + f"[bold cyan]{title}[/bold cyan]" + " " * (total_width - 2 - padding - len(title) - 8) + "│")
+        console.print("└" + "─" * (total_width - 2) + "┘")
+        
+        # Show summary info
+        summary_parts = [
+            f"[bold]Threshold:[/bold] {threshold:.2f}",
+            f"[bold]Total:[/bold] {len(all_matches)}",
+            f"[bold]Selected:[/bold] {len(selected)}",
+        ]
+        if max_tools and above_threshold_count and above_threshold_count > len(selected):
+            summary_parts.append(f"[yellow](capped from {above_threshold_count} by max_tools={max_tools})[/yellow]")
+        
+        console.print(f"\n   {' │ '.join(summary_parts)}")
+        console.print()
+        
+        # Table header - use rich Table for proper formatting
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
+        table.add_column("#", justify="right", width=col_rank)
+        table.add_column("Tool Name", width=col_name)
+        table.add_column("Sim", justify="right", width=col_sim)
+        table.add_column("Status", width=col_status)
+        table.add_column("Category", width=col_cat)
+        
+        for i, match in enumerate(all_matches, 1):
+            name = match["name"]
+            if len(name) > col_name:
+                name = name[:col_name - 3] + "..."
+            
+            sim = match["similarity"]
+            is_selected = match["name"] in selected_names
+            category = match.get("category", "?")
+            if len(category) > col_cat:
+                category = category[:col_cat - 1] + "…"
+            
+            # Format similarity with color
+            if is_selected:
+                sim_str = f"[green]{sim:.4f}[/green]"
+                status = "[green]✓ SEL[/green]"
+            elif sim >= threshold:
+                # Above threshold but not selected (capped by max_tools)
+                sim_str = f"[yellow]{sim:.4f}[/yellow]"
+                status = "[yellow]~ CAP[/yellow]"
+            else:
+                sim_str = f"[dim]{sim:.4f}[/dim]"
+                status = "[dim]✗ REJ[/dim]"
+            
+            table.add_row(str(i), name, sim_str, status, category)
+        
+        console.print(table)
+        
+        # Show accuracy if expected tools provided
+        if accuracy_info:
+            console.print()
+            expected = accuracy_info.get("expected", [])
+            matched = accuracy_info.get("matched", [])
+            missing = accuracy_info.get("missing", [])
+            
+            if expected:
+                console.print(f"   [bold]Expected:[/bold] {', '.join(expected)}")
+                if matched:
+                    console.print(f"   [green]✓ Matched:[/green] {', '.join(matched)}")
+                if missing:
+                    console.print(f"   [red]✗ Missing:[/red] {', '.join(missing)}")
+                console.print(f"   [bold]Accuracy:[/bold] {accuracy_info.get('accuracy', 'N/A')}")
+        
+        console.print()
+    
+    # =========================================================================
+    # TOOL CALL LOGGING
     # =========================================================================
     
     def log_tool_call(
