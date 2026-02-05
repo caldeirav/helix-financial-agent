@@ -13,24 +13,27 @@ A **Reflexive Financial AI Agent** with semantic routing, dynamic tool selection
 ## Architecture
 
 ```
-                    ┌─────────────────────────────────────────────────────────┐
-                    │              vLLM SEMANTIC ROUTER (model="MoM")         │
-                    │    Financial queries → Qwen3-30B-A3B (llama.cpp)       │
-                    │    Evaluation/Judge → Gemini 2.5 Pro (Google API)      │
-                    └─────────────────────────────────────────────────────────┘
-                                              │
-                                              ▼
-User Query ──► ToolRAG ──► Generator ──► MCP Server ──► yfinance
-               (select)    (via Router)    (tools)
-                  │             │
-                  │             ▼
-                  │       Reflector (via Router → Gemini)
-                  │             │
-                  │    [Score >= 8?] ──┬── [Score < 8]
-                  │         │               │
-                  │      Output          Revisor ──► retry (max 3)
-                  │
-                  └─► Only selected tools bound to LLM
+                            ┌───────────────────────────────────────┐
+                            │       vLLM SEMANTIC ROUTER            │
+                            │          (model="MoM")                │
+                            │                                       │
+                            │    Qwen3 (llama.cpp)     Gemini 2.5   │
+                            └───────┬───────────────────────┬───────┘
+                                    │                       │
+                         ┌──────────┴──────────┐            │
+                         ▼                     ▼            ▼
+User Query ──► ToolRAG ──► Generator ──► Reflector ◄───── Revisor
+                 │             │             │                 ▲
+                 │             │             │                 │
+                 │             ▼             ▼                 │
+                 │        MCP Server    [Score >= 8?]          │
+                 │             │             │                 │
+                 │             ▼        ┌────┴────┐            │
+                 │         yfinance     ▼         ▼            │
+                 │                   Output    Revise ─────────┘
+                 │                             (max 3)
+                 │
+                 └─► Only selected tools bound to Generator/Revisor
 ```
 
 ### Request Flow
@@ -152,21 +155,24 @@ helix-agent
 
 ### Port Forwarding for Web UIs
 
-If accessing web interfaces from another machine, forward the UI ports:
+Run these commands on your **local machine** (laptop/desktop) to access web UIs on the remote server:
 
 ```bash
-# Forward web UI ports only
-ssh -L 8080:localhost:8080 \
+# Forward web UI ports (replace <user>@<host> with your server)
+# Note: Uses local port 8180 to avoid conflicts with Cursor IDE (which uses 8080)
+ssh -L 8180:localhost:8080 \
     -L 5000:localhost:5000 \
-    user@zgx-nano
+    <user>@<host>
 
 # Or use the provided script
-./scripts/ssh_port_forward.sh user@zgx-nano
+./scripts/ssh_port_forward.sh <user>@<host>
 ```
 
-**After port forwarding, access:**
-- Semantic Router Hub UI: http://localhost:8080
-- MLflow UI: http://localhost:5000 (start with `mlflow ui`)
+**After port forwarding, open in your local browser:**
+- Semantic Router Hub UI: http://localhost:8180
+- MLflow UI: http://localhost:5000
+
+**Note:** Start MLflow UI on the server first: `mlflow ui --host 0.0.0.0`
 
 ---
 
@@ -246,6 +252,83 @@ llm = ChatOpenAI(
 
 ---
 
+## MLflow Tracing
+
+End-to-end observability for the agent with automatic tracing and custom assessments.
+
+### What Gets Traced
+
+| Component | Traced As | Details |
+|-----------|-----------|---------|
+| Generator → ChatOpenAI | CHAT_MODEL span | Prompts, outputs, token usage |
+| Tool Executor → ToolNode | TOOL spans | Tool name, arguments, outputs |
+| Reflector → ChatOpenAI | CHAT_MODEL span | Evaluation prompts, responses |
+| Revisor → ChatOpenAI | CHAT_MODEL span | Revision prompts, responses |
+| Full graph execution | CHAIN span | End-to-end timeline |
+
+### Custom Assessments
+
+Per-trace assessments logged for each agent run:
+
+| Assessment | Type | Description |
+|------------|------|-------------|
+| `tool_selection_successful` | Y/N | Did ToolRAG select the correct tools? |
+| `model_selection_successful` | Y/N | Did the router select appropriate models? |
+| `judge_score` | 0-10 | Score from LLM-as-a-Judge evaluation |
+| `latency_seconds` | float | Total execution time |
+| `iteration_count` | int | Number of revision iterations |
+
+### Usage
+
+Tracing is enabled by default. View traces at http://localhost:5000 after starting the MLflow UI:
+
+```bash
+# Start MLflow UI
+mlflow ui --port 5000
+
+# Run agent (tracing enabled by default)
+helix-agent -q "What is AAPL's PE ratio?"
+
+# Run benchmark with tracing
+helix-eval --max-queries 10
+
+# Disable tracing
+helix-agent -q "query" --no-tracing
+```
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MLFLOW_TRACKING_URI` | `./mlruns` | MLflow tracking URI |
+| `MLFLOW_EXPERIMENT_NAME` | `helix-financial-agent` | Experiment name |
+
+### Benchmark Metrics
+
+When running benchmarks, aggregate metrics are logged to MLflow:
+
+| Metric | Description |
+|--------|-------------|
+| `avg_correctness_score` | Average judge score for valid queries |
+| `valid_pass_rate` | % of valid queries scoring >= 7 |
+| `safety_pass_rate` | % of hazard queries correctly refused |
+| `tool_selection_accuracy` | % of queries with correct tool selection |
+| `avg_agent_time_sec` | Average execution time per query |
+
+### Remote Tracking Server
+
+For production deployments, use a remote MLflow server:
+
+```bash
+# Set remote tracking URI
+export MLFLOW_TRACKING_URI=http://mlflow-server:5000
+
+# Or in .env file
+MLFLOW_TRACKING_URI=http://mlflow-server:5000
+```
+
+---
+
 ## Financial Tools
 
 ### Core Tools
@@ -295,7 +378,17 @@ llm = ChatOpenAI(
 | `--dataset, -d` | Custom dataset path |
 | `--eval, -e` | Enable evaluation |
 | `--no-tool-rag` | Use all tools |
+| `--no-tracing` | Disable MLflow tracing |
 | `--quiet` | Less verbose |
+
+### Benchmark Options
+
+| Option | Description |
+|--------|-------------|
+| `--dataset` | Path to JSONL dataset |
+| `--max-queries` | Maximum queries to run |
+| `--no-tool-rag` | Disable ToolRAG |
+| `--no-tracing` | Disable MLflow tracing |
 
 ---
 

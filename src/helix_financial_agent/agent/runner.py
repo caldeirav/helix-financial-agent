@@ -1,5 +1,5 @@
 """
-Agent Runner with Rich Logging
+Agent Runner with Rich Logging and MLflow Tracing
 
 Provides a high-level interface for running the agent with
 comprehensive logging, tracing, and beautiful console output.
@@ -8,6 +8,15 @@ Architecture:
     - All LLM calls go through the vLLM Semantic Router
     - All tool calls go through the MCP server
     - Both services are MANDATORY for agent operation
+    - MLflow tracing captures end-to-end execution
+
+MLflow Integration:
+    - Automatic tracing of LLM calls and tool executions via autolog
+    - Custom assessments logged per trace:
+        - tool_selection_successful: Y/N
+        - model_selection_successful: Y/N
+        - judge_score: 0-10
+    - Benchmark runs wrapped in MLflow runs for aggregation
 """
 
 import json
@@ -33,6 +42,14 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from ..config import get_config
 from ..tools import CORE_TOOLS, check_mcp_server, get_mcp_client
 from ..tool_rag import ToolSelector
+from ..tracing import (
+    setup_mlflow_tracing,
+    get_current_trace_id,
+    log_run_assessments,
+    evaluate_tool_selection,
+    evaluate_model_selection,
+    is_tracing_enabled,
+)
 from .state import AgentState, create_initial_state
 from .graph import create_agent
 
@@ -190,11 +207,17 @@ class AgentRunner:
     - ToolRAG integration for dynamic tool selection
     - LLM-as-a-Judge evaluation
     - Comprehensive metrics collection and tracing
+    - MLflow tracing for end-to-end observability
     
     Required Services:
     - llama.cpp: Model serving for Qwen3 agent
     - vLLM-SR: Semantic routing between agent and judge models
     - MCP Server: Tool execution via MCP protocol
+    
+    MLflow Tracing:
+    - Automatic LLM/tool tracing via mlflow.langchain.autolog()
+    - Custom assessments per trace: tool_selection, model_selection, judge_score
+    - View traces at http://localhost:5000 (mlflow ui)
     """
     
     def __init__(
@@ -204,6 +227,7 @@ class AgentRunner:
         verbose: bool = True,
         skip_service_check: bool = False,
         run_evaluation: bool = False,
+        enable_tracing: bool = True,
     ):
         """
         Initialize the agent runner.
@@ -214,11 +238,17 @@ class AgentRunner:
             verbose: Whether to print detailed output
             skip_service_check: Skip service verification (for testing only)
             run_evaluation: Whether to run LLM-as-a-Judge evaluation after response
+            enable_tracing: Whether to enable MLflow tracing (default: True)
         """
         self.all_tools = tools or CORE_TOOLS
         self.use_tool_rag = use_tool_rag
         self.verbose = verbose
         self.run_evaluation = run_evaluation
+        self.enable_tracing = enable_tracing
+        
+        # Initialize MLflow tracing
+        if enable_tracing:
+            setup_mlflow_tracing()
         
         # Verify required services are running
         if not skip_service_check:
@@ -461,6 +491,77 @@ class AgentRunner:
                 "event": "evaluation_complete",
                 "data": evaluation
             })
+        
+        # =================================================================
+        # MLFLOW TRACING: Log custom assessments to the trace
+        # =================================================================
+        if self.enable_tracing:
+            trace_id = get_current_trace_id()
+            result["trace_id"] = trace_id
+            
+            if trace_id:
+                if self.verbose:
+                    console.print("\n" + "─" * 70)
+                    console.print("[bold magenta]📊 PHASE 4: MLFLOW TRACING[/bold magenta]")
+                    console.print("─" * 70)
+                
+                # Evaluate tool selection success
+                expected_tools = query_metadata.get("expected_tools", []) if query_metadata else []
+                tool_selection_success = evaluate_tool_selection(
+                    selected_tool_names, expected_tools
+                )
+                
+                # Evaluate model selection success (based on trace log)
+                model_selection_success = evaluate_model_selection(trace_log)
+                
+                # Extract judge score from evaluation
+                judge_score = None
+                judge_reasoning = None
+                judge_category = None
+                if result.get("evaluation"):
+                    eval_data = result["evaluation"]
+                    judge_category = eval_data.get("category", "valid")
+                    if judge_category == "valid":
+                        judge_score = eval_data.get("total_score", 0)
+                    else:
+                        # Safety evaluation: passed=True → 10, passed=False → 0
+                        judge_score = 10 if eval_data.get("passed", False) else 0
+                    judge_reasoning = eval_data.get("reasoning", "")
+                
+                # Log all assessments to the trace
+                assessment_results = log_run_assessments(
+                    trace_id=trace_id,
+                    tool_selection_success=tool_selection_success,
+                    model_selection_success=model_selection_success,
+                    judge_score=judge_score,
+                    judge_reasoning=judge_reasoning,
+                    judge_category=judge_category,
+                    selected_tools=selected_tool_names,
+                    expected_tools=expected_tools if expected_tools else None,
+                    tools_used=result.get("unique_tools", []),
+                    latency_seconds=elapsed_time,
+                    iteration_count=iterations,
+                )
+                
+                # Store assessment results
+                result["assessments"] = {
+                    "tool_selection_successful": tool_selection_success,
+                    "model_selection_successful": model_selection_success,
+                    "judge_score": judge_score,
+                    "trace_id": trace_id,
+                }
+                
+                if self.verbose:
+                    console.print(f"  📝 Trace ID: [cyan]{trace_id[:30]}...[/cyan]")
+                    console.print(f"  🎯 Tool Selection: [{'green' if tool_selection_success else 'red'}]{'✅ SUCCESS' if tool_selection_success else '❌ FAILED'}[/{'green' if tool_selection_success else 'red'}]")
+                    console.print(f"  🔀 Model Selection: [{'green' if model_selection_success else 'yellow'}]{'✅ SUCCESS' if model_selection_success else '⚠️ UNVERIFIED'}[/{'green' if model_selection_success else 'yellow'}]")
+                    if judge_score is not None:
+                        score_color = "green" if judge_score >= 7 else "yellow" if judge_score >= 5 else "red"
+                        console.print(f"  ⚖️  Judge Score: [{score_color}]{judge_score}/10[/{score_color}]")
+                    console.print(f"  ✓ Logged {sum(assessment_results.values())} assessments to MLflow")
+            else:
+                if self.verbose:
+                    console.print("\n[yellow]⚠️ No MLflow trace captured for this run[/yellow]")
         
         # Print summary
         if self.verbose:
@@ -756,9 +857,41 @@ class AgentRunner:
                 status = "[green]PASSED[/green]" if passed else "[red]FAILED[/red]"
                 console.print(f"[bold]🛡️  Safety Check: {status}[/bold]")
         
+        # MLflow Assessments summary if available
+        if result.get("assessments"):
+            assessments = result["assessments"]
+            console.print()
+            console.print("─" * 70)
+            console.print("[bold]📊 MLflow Assessments:[/bold]")
+            
+            # Tool Selection
+            tool_success = assessments.get("tool_selection_successful")
+            if tool_success is not None:
+                status = "[green]Y[/green]" if tool_success else "[red]N[/red]"
+                console.print(f"   Tool Selection Successful: {status}")
+            
+            # Model Selection
+            model_success = assessments.get("model_selection_successful")
+            if model_success is not None:
+                status = "[green]Y[/green]" if model_success else "[yellow]?[/yellow]"
+                console.print(f"   Model Selection Successful: {status}")
+            
+            # Judge Score
+            judge_score = assessments.get("judge_score")
+            if judge_score is not None:
+                color = "green" if judge_score >= 7 else "yellow" if judge_score >= 5 else "red"
+                console.print(f"   Judge Score: [{color}]{judge_score}/10[/{color}]")
+            
+            # Trace ID
+            trace_id = assessments.get("trace_id")
+            if trace_id:
+                console.print(f"   Trace ID: [dim]{trace_id[:40]}...[/dim]")
+        
         console.print()
         console.print("═" * 70)
         console.print("[bold green]✅ Agent execution completed successfully[/bold green]")
+        if result.get("trace_id"):
+            console.print("[dim]View trace: mlflow ui --port 5000 → http://localhost:5000[/dim]")
         console.print("═" * 70)
 
 
@@ -769,6 +902,7 @@ def run_agent(
     use_tool_rag: bool = True,
     run_evaluation: bool = False,
     query_metadata: Optional[Dict] = None,
+    enable_tracing: bool = True,
 ) -> Dict[str, Any]:
     """
     Convenience function to run the agent on a query.
@@ -778,6 +912,13 @@ def run_agent(
     - vLLM-SR router: ./scripts/start_router.sh
     - MCP server: ./scripts/start_mcp_server.sh
     
+    MLflow Tracing:
+    When enable_tracing=True (default), the result includes:
+    - trace_id: MLflow trace identifier
+    - assessments: Dict with tool_selection_successful, model_selection_successful, judge_score
+    
+    View traces at http://localhost:5000 after running: mlflow ui --port 5000
+    
     Args:
         query: The user's financial question
         thread_id: Optional thread ID for conversation continuity
@@ -785,9 +926,10 @@ def run_agent(
         use_tool_rag: Whether to use ToolRAG for tool selection
         run_evaluation: Whether to run LLM-as-a-Judge evaluation
         query_metadata: Optional metadata (category, subcategory, expected_tools)
+        enable_tracing: Whether to enable MLflow tracing (default: True)
         
     Returns:
-        Dict with query, response, metrics, evaluation (if enabled), etc.
+        Dict with query, response, metrics, evaluation (if enabled), assessments, trace_id, etc.
         
     Raises:
         ServiceError: If required services are not running
@@ -796,6 +938,7 @@ def run_agent(
         verbose=verbose,
         use_tool_rag=use_tool_rag,
         run_evaluation=run_evaluation,
+        enable_tracing=enable_tracing,
     )
     return runner.run(query, thread_id=thread_id, query_metadata=query_metadata)
 
