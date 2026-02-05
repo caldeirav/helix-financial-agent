@@ -252,6 +252,232 @@ llm = ChatOpenAI(
 
 ---
 
+## Router Technical Details
+
+This section explains the internal architecture of the vLLM Semantic Router and the customizations required for external API routing (e.g., Gemini).
+
+### Architecture Overview
+
+The vLLM Semantic Router (vLLM-SR) consists of three main components running inside a Docker container:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     vLLM-SR Container                               │
+│                                                                     │
+│  ┌──────────────┐    ┌──────────────┐    ┌───────────────────────┐ │
+│  │   Envoy      │───►│   ExtProc    │───►│   Classification      │ │
+│  │   Proxy      │    │   Service    │    │   API (Python)        │ │
+│  │   (8801)     │◄───│   (gRPC)     │◄───│   (8080)              │ │
+│  └──────────────┘    └──────────────┘    └───────────────────────┘ │
+│         │                                         │                 │
+│         │ Routes to:                              │ Downloads:      │
+│         ▼                                         ▼                 │
+│  ┌──────────────┐                    ┌───────────────────────────┐ │
+│  │ Upstream     │                    │   HuggingFace Models      │ │
+│  │ Servers      │                    │   - Embedding models      │ │
+│  │ (Gemini,     │                    │   - Classification models │ │
+│  │  llama.cpp)  │                    └───────────────────────────┘ │
+│  └──────────────┘                                                   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+| Component | Port | Purpose |
+|-----------|------|---------|
+| Envoy Proxy | 8801 | HTTP entry point, routes requests based on `x-selected-model` header |
+| ExtProc Service | 50051 (gRPC) | Processes requests, classifies intent, sets routing headers |
+| Classification API | 8080 | Health checks, model listing, classification endpoints |
+
+### Request Flow
+
+1. **Request arrives** at Envoy (port 8801) with `model: "MoM"`
+2. **ExtProc intercepts** the request via gRPC External Processing filter
+3. **Classification** runs embeddings + keyword matching to determine intent
+4. **ExtProc sets** `x-selected-model` header (e.g., `gemini-2.5-pro` or `qwen3-30b-a3b`)
+5. **Envoy routes** based on `x-selected-model` to the appropriate upstream cluster
+6. **Response flows** back through Envoy to the client
+
+### Configuration Files
+
+| File | Purpose |
+|------|---------|
+| `config/router_config.yaml` | User-facing config: decisions, signals, model endpoints |
+| `config/.vllm-sr/envoy.template.yaml` | Jinja2 template for Envoy configuration |
+| `config/.vllm-sr/processed_config.yaml` | Runtime config with resolved secrets (auto-generated) |
+| `config/.vllm-sr/router-config.yaml` | Generated router config (inside container) |
+
+### Start Script (`scripts/start_router.sh`)
+
+The start script performs several important steps:
+
+```bash
+# 1. Load environment variables from .env
+source "$PROJECT_ROOT/.env"
+
+# 2. Preprocess config to resolve access_key_env references
+#    Converts: access_key_env: "GEMINI_API_KEY"
+#    To:       access_key: "actual_api_key_value"
+python3 << 'PYEOF'
+# ... Python preprocessing script ...
+PYEOF
+
+# 3. Start Docker container with volume mounts
+docker run -d \
+    -v "$CONFIG_PATH":/app/config.yaml:ro \                    # User config
+    -v "$VLLM_SR_DIR":/app/.vllm-sr \                          # State directory
+    -v "$ENVOY_TEMPLATE":/app/cli/templates/envoy.template.yaml:ro \  # Custom template
+    -e GEMINI_API_KEY=$GEMINI_API_KEY \                        # API key for template
+    ...
+```
+
+**Key Points:**
+- Config preprocessing happens **before** the container starts
+- Custom Envoy template is mounted **over** the default template
+- API keys are passed as environment variables to the container
+
+### External API Routing (Gemini)
+
+Routing to external APIs like Gemini requires special handling because:
+
+1. **Path Rewriting**: Gemini's OpenAI-compatible API expects requests at `/v1beta/openai/v1/chat/completions`, not `/v1/chat/completions`
+2. **Authentication**: Requires `Authorization: Bearer <api_key>` header
+
+#### Problem: vLLM-SR Limitations
+
+The default vLLM-SR configuration format doesn't fully support:
+- `base_path` or `path_prefix` for external endpoints (only documented for vLLM instances)
+- `access_key_env` resolution (only `access_key` with literal values)
+
+#### Solution: Custom Envoy Template
+
+We modified `config/.vllm-sr/envoy.template.yaml` to handle these cases:
+
+**1. Path Prefix Rewriting:**
+
+```yaml
+{% if model.path_prefix %}
+# Generic path_prefix support (if router parses it)
+regex_rewrite:
+  pattern:
+    google_re2: {}
+    regex: "^(.*)$"
+  substitution: "{{ model.path_prefix }}\\1"
+{% elif model.endpoints[0].address == 'generativelanguage.googleapis.com' %}
+# Hardcoded fallback for Gemini
+regex_rewrite:
+  pattern:
+    google_re2: {}
+    regex: "^(.*)$"
+  substitution: "/v1beta/openai\\1"
+{% endif %}
+```
+
+This rewrites `/v1/chat/completions` → `/v1beta/openai/v1/chat/completions` for Gemini.
+
+**2. Authorization Header Injection:**
+
+```yaml
+{% if model.access_key %}
+request_headers_to_add:
+  - header:
+      key: "Authorization"
+      value: "Bearer {{ model.access_key }}"
+    append_action: OVERWRITE_IF_EXISTS_OR_ADD
+{% endif %}
+```
+
+The `access_key` is populated at template render time from the preprocessed config.
+
+#### Solution: Config Preprocessing
+
+Since vLLM-SR doesn't resolve `access_key_env` to actual values, `start_router.sh` preprocesses the config:
+
+```python
+# In start_router.sh (embedded Python)
+for model in models:
+    if 'access_key_env' in model:
+        env_var = model.pop('access_key_env')  # e.g., "GEMINI_API_KEY"
+        value = os.environ.get(env_var)         # Actual API key
+        if value:
+            model['access_key'] = value         # Set for template
+```
+
+**Before preprocessing (`router_config.yaml`):**
+```yaml
+- name: "gemini-2.5-pro"
+  endpoints:
+    - endpoint: "generativelanguage.googleapis.com"
+      protocol: "https"
+  access_key_env: "GEMINI_API_KEY"  # Reference, not value
+```
+
+**After preprocessing (`processed_config.yaml`):**
+```yaml
+- name: "gemini-2.5-pro"
+  endpoints:
+    - endpoint: "generativelanguage.googleapis.com"
+      protocol: "https"
+  access_key: "AIzaSy..."  # Actual API key (not committed to git)
+```
+
+### Adding New External Providers
+
+To add a new external LLM provider (e.g., Anthropic, OpenAI):
+
+1. **Add to `router_config.yaml`:**
+```yaml
+providers:
+  models:
+    - name: "claude-3-opus"
+      param_size: "unknown"
+      path_prefix: "/v1"  # If different from standard
+      endpoints:
+        - name: "anthropic"
+          endpoint: "api.anthropic.com"
+          protocol: "https"
+      access_key_env: "ANTHROPIC_API_KEY"
+```
+
+2. **Add environment variable to `.env`:**
+```bash
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+3. **Update `start_router.sh`** to pass the env var to Docker:
+```bash
+[ -n "$ANTHROPIC_API_KEY" ] && ENV_VARS="$ENV_VARS -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY"
+```
+
+4. **Update Envoy template** if the provider needs special handling (custom paths, headers, etc.)
+
+### Debugging Router Issues
+
+**Check if Envoy started correctly:**
+```bash
+docker logs vllm-sr-container 2>&1 | grep -E "(error|critical|fatal)"
+```
+
+**View generated Envoy config:**
+```bash
+docker exec vllm-sr-container cat /etc/envoy/envoy.yaml
+```
+
+**Check routing headers on a request:**
+```bash
+curl -v -X POST http://localhost:8801/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "MoM", "messages": [{"role": "user", "content": "test"}]}' 2>&1 | grep "x-vsr"
+```
+
+**Common issues:**
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `404 Not Found` | Missing path prefix | Check `regex_rewrite` in Envoy config |
+| `401 Unauthorized` | Missing API key | Check `access_key` in processed config |
+| `500 Internal Server Error` | ExtProc not ready | Wait for model downloads to complete |
+| `Connection reset` | Envoy crashed | Check logs for config errors |
+
+---
+
 ## MLflow Tracing
 
 End-to-end observability for the agent with automatic tracing and custom assessments.
@@ -535,16 +761,22 @@ helix-financial-agent/
 │   ├── agent/           # LangGraph nodes, graph, runner
 │   ├── tools/           # Financial tools + MCP server
 │   ├── tool_rag/        # ChromaDB tool selection
-│   ├── router/          # vLLM-SR client & config
+│   ├── router/          # vLLM-SR client & config generator
 │   ├── evaluation/      # LLM-as-a-Judge
 │   └── data_generation/ # Synthetic data
 ├── scripts/
-│   ├── start_llama_server.sh
-│   ├── start_router.sh
-│   ├── start_mcp_server.sh
-│   └── ssh_port_forward.sh
+│   ├── start_llama_server.sh   # Start llama.cpp model server
+│   ├── start_router.sh         # Start vLLM-SR (with config preprocessing)
+│   ├── stop_router.sh          # Stop all router containers
+│   ├── start_mcp_server.sh     # Start FastMCP tool server
+│   └── ssh_port_forward.sh     # Port forwarding helper
 ├── config/
-│   └── router_config.yaml
+│   ├── router_config.yaml      # User-facing router configuration
+│   └── .vllm-sr/               # Router runtime state (auto-generated)
+│       ├── envoy.template.yaml     # Custom Envoy template (path rewrite, auth)
+│       ├── processed_config.yaml   # Config with resolved secrets
+│       └── router-config.yaml      # Generated router config
+├── data/                       # Generated datasets (output of helix-generate)
 └── .vscode/
     └── launch.json
 ```
@@ -565,6 +797,36 @@ curl http://localhost:8889/health
 # Check MCP
 curl http://localhost:8000/mcp
 ```
+
+### Router startup issues
+
+**Router takes a long time to start:**
+- Normal on first run - downloads ~1.5GB of ML models from HuggingFace
+- Monitor progress: `docker logs -f vllm-sr-container`
+
+**Router crashes immediately:**
+```bash
+# Check for config errors
+docker logs vllm-sr-container 2>&1 | grep -E "(error|critical|fatal)"
+
+# Common cause: invalid Envoy template syntax
+# Check the generated config:
+docker exec vllm-sr-container cat /etc/envoy/envoy.yaml
+```
+
+**Gemini returns 404:**
+- Path prefix not applied - check `regex_rewrite` in Envoy config
+- Verify: `docker exec vllm-sr-container cat /etc/envoy/envoy.yaml | grep -A5 "regex_rewrite"`
+
+**Gemini returns 401/403:**
+- API key not injected - check preprocessed config
+- Verify: `cat config/.vllm-sr/processed_config.yaml | grep access_key`
+- Ensure `.env` has valid `GEMINI_API_KEY`
+
+**Connection reset by peer:**
+- Envoy crashed due to config error
+- Check: `docker logs vllm-sr-container 2>&1 | tail -50`
+- Look for "Not supported field" or similar errors
 
 ### Model download fails
 
@@ -589,6 +851,20 @@ TOOL_RAG_THRESHOLD=0.25
 
 Check if score parsing is working. Scores >= 8.0 pass.
 The reflector uses Gemini which returns markdown scores like "Score: 8.5 / 10".
+
+### Routing goes to wrong model
+
+**Check routing headers:**
+```bash
+curl -v -X POST http://localhost:8801/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "MoM", "messages": [{"role": "user", "content": "your query"}]}' 2>&1 | grep "x-vsr"
+```
+
+**Adjust routing rules** in `config/router_config.yaml`:
+- Increase `priority` for the decision you want to match
+- Add more keywords to the signal
+- Adjust embedding `threshold` values
 
 ---
 
