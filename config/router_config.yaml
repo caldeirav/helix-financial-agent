@@ -232,12 +232,14 @@ providers:
     # See: https://ai.google.dev/gemini-api/docs/openai
     - name: "gemini-2.5-pro"
       param_size: "unknown"
+      # path_prefix prepends to all request paths (e.g., /v1/chat/completions -> /v1beta/openai/v1/chat/completions)
+      path_prefix: "/v1beta/openai"
       endpoints:
         - name: "gemini_openai"
           weight: 1
           endpoint: "generativelanguage.googleapis.com"
           protocol: "https"
-          base_path: "/v1beta/openai"
+      # API key is injected via Envoy config using GEMINI_API_KEY env var
       access_key_env: "GEMINI_API_KEY"
 
   # Default model for fallback

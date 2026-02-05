@@ -99,6 +99,46 @@ fi
 # Create .vllm-sr directory for state
 mkdir -p "$VLLM_SR_DIR"
 
+# Preprocess config to resolve access_key_env references
+# This converts access_key_env: "VAR_NAME" to access_key: "actual_value"
+PROCESSED_CONFIG="$VLLM_SR_DIR/processed_config.yaml"
+echo "Preprocessing config to resolve access_key_env..."
+python3 << 'PYEOF'
+import os
+import sys
+import yaml
+
+config_path = os.environ.get('CONFIG_PATH', 'config/router_config.yaml')
+output_path = os.environ.get('PROCESSED_CONFIG', 'config/.vllm-sr/processed_config.yaml')
+
+with open(config_path, 'r') as f:
+    config = yaml.safe_load(f)
+
+# Process providers.models to resolve access_key_env
+models = config.get('providers', {}).get('models', [])
+for model in models:
+    if 'access_key_env' in model:
+        env_var = model.pop('access_key_env')
+        value = os.environ.get(env_var)
+        if value:
+            model['access_key'] = value
+            print(f"  Resolved {env_var} for model '{model.get('name')}'")
+        else:
+            print(f"  WARNING: {env_var} not set for model '{model.get('name')}'", file=sys.stderr)
+
+# Write processed config
+with open(output_path, 'w') as f:
+    yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+print(f"  Wrote processed config to {output_path}")
+PYEOF
+
+# Use processed config if preprocessing succeeded
+if [ -f "$PROCESSED_CONFIG" ]; then
+    CONFIG_PATH="$PROCESSED_CONFIG"
+    echo "  Using processed config: $CONFIG_PATH"
+fi
+
 # Cleanup existing containers
 cleanup_container() {
     local name=$1
@@ -162,6 +202,11 @@ ENV_VARS=""
 #   - METRICS_PORT -> 9190 (Prometheus metrics)
 #   - 8700 -> 8700 (Dashboard)
 #   - 50051 -> 50051 (gRPC)
+#
+# Custom Envoy template mount:
+#   The custom envoy.template.yaml in config/.vllm-sr/ adds path_prefix support
+#   for external APIs like Gemini that require path rewrites.
+ENVOY_TEMPLATE="$VLLM_SR_DIR/envoy.template.yaml"
 docker run -d \
     --name "$CONTAINER_NAME" \
     --network "$NETWORK_NAME" \
@@ -173,6 +218,7 @@ docker run -d \
     -p 50051:50051 \
     -v "$CONFIG_PATH":/app/config.yaml:ro \
     -v "$VLLM_SR_DIR":/app/.vllm-sr \
+    -v "$ENVOY_TEMPLATE":/app/cli/templates/envoy.template.yaml:ro \
     $ENV_VARS \
     "$IMAGE"
 
