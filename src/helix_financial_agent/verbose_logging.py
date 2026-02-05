@@ -55,6 +55,7 @@ Usage:
 """
 
 import json
+import textwrap
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -222,8 +223,9 @@ class VerboseLogger:
         # Print details if any
         if entry.details:
             for key, value in entry.details.items():
-                # Don't truncate query and expected_tools fields
-                if isinstance(value, str) and len(value) > 100 and key not in ("query", "expected_tools"):
+                # Don't truncate these important fields - show them in full
+                no_truncate_fields = ("query", "expected_tools", "prompt_preview", "prompt")
+                if isinstance(value, str) and len(value) > 100 and key not in no_truncate_fields:
                     value = self._truncate(value, 100)
                 console.print(f"           └─ {key}: {value}")
     
@@ -241,22 +243,23 @@ class VerboseLogger:
         """Log an LLM request."""
         self.counters["llm_requests"] += 1
         
-        # Convert messages to string preview
+        # Convert messages to string - don't truncate, show full prompt
         if isinstance(prompt, list):
             prompt_str = " | ".join([
-                f"{m.get('role', 'user')}: {m.get('content', '')[:50]}"
+                f"{m.get('role', 'user')}: {m.get('content', '')}"
                 for m in prompt[:3]
             ])
         else:
             prompt_str = str(prompt)
         
-        preview = self._truncate(prompt_str) if not self.show_full_prompts else prompt_str
+        # Don't truncate prompt_preview - important for understanding queries
+        preview = prompt_str
         
         # Track timing
         req_id = request_id or f"{node}_{time.time()}"
         self._pending_requests[req_id] = time.time()
         
-        self._log(LogLevel.INFO, "llm", f"LLM Request [{node}]", {
+        self._log(LogLevel.INFO, "llm", f"LLM Request", {
             "model_requested": model,
             "prompt_preview": preview,
         })
@@ -530,6 +533,134 @@ class VerboseLogger:
                 console.print(f"   [bold]Accuracy:[/bold] {accuracy_info.get('accuracy', 'N/A')}")
         
         console.print()
+    
+    # =========================================================================
+    # SAFETY EVALUATION LOGGING (Hazard Queries)
+    # =========================================================================
+    
+    def log_safety_evaluation(
+        self,
+        query: str,
+        response: str,
+        evaluation: Dict[str, Any],
+        category: str = "hazard",
+        subcategory: str = "",
+    ):
+        """
+        Log detailed safety evaluation for hazard queries.
+        
+        Shows how the metacognitive loop and guardrails handled
+        potentially dangerous queries (regulated advice, unrealistic promises, etc.)
+        
+        Args:
+            query: The hazard query
+            response: The agent's response
+            evaluation: Safety evaluation results from judge
+            category: Query category (hazard)
+            subcategory: Hazard type (regulated_advice, unrealistic_promises, etc.)
+        """
+        passed = evaluation.get("passed", False)
+        refused = evaluation.get("refused_appropriately", False)
+        disclaimer = evaluation.get("included_disclaimer", False)
+        reasoning = evaluation.get("reasoning", "")
+        
+        if not self.verbose:
+            return
+        
+        console.print()
+        console.print("┌" + "─" * 76 + "┐")
+        title = "🛡️ SAFETY GUARDRAILS EVALUATION"
+        padding = (76 - len(title) - 8) // 2
+        console.print("│" + " " * padding + f"[bold yellow]{title}[/bold yellow]" + " " * (76 - padding - len(title) - 8) + "│")
+        console.print("└" + "─" * 76 + "┘")
+        
+        # Hazard type
+        hazard_descriptions = {
+            "regulated_advice": "Request for specific investment advice (requires licensure)",
+            "unrealistic_promises": "Request for guaranteed/risk-free returns",
+            "market_manipulation": "Request that could facilitate market manipulation",
+            "illegal_activity": "Request for potentially illegal financial activity",
+        }
+        hazard_desc = hazard_descriptions.get(subcategory, subcategory)
+        
+        console.print(f"\n   [bold]Hazard Type:[/bold] [yellow]{subcategory}[/yellow]")
+        console.print(f"   [dim]{hazard_desc}[/dim]")
+        
+        # Overall result
+        if passed:
+            console.print(f"\n   [bold green]✅ SAFETY CHECK: PASSED[/bold green]")
+            console.print(f"   [dim]The agent handled this hazard query appropriately[/dim]")
+        else:
+            console.print(f"\n   [bold red]❌ SAFETY CHECK: FAILED[/bold red]")
+            console.print(f"   [dim]The agent may have provided inappropriate advice[/dim]")
+        
+        # Guardrail indicators
+        console.print(f"\n   [bold]Guardrail Indicators:[/bold]")
+        
+        if refused is not None:
+            refused_icon = "[green]✓[/green]" if refused else "[red]✗[/red]"
+            console.print(f"   {refused_icon} Refused to provide specific advice: {'Yes' if refused else 'No'}")
+        
+        if disclaimer is not None:
+            disclaimer_icon = "[green]✓[/green]" if disclaimer else "[yellow]○[/yellow]"
+            console.print(f"   {disclaimer_icon} Included appropriate disclaimers: {'Yes' if disclaimer else 'No'}")
+        
+        # Response preview (show how agent actually responded)
+        console.print(f"\n   [bold]Agent Response Preview:[/bold]")
+        response_preview = response[:400] if response else "(empty)"
+        if len(response) > 400:
+            response_preview += "..."
+        # Wrap long lines for readability
+        wrapped = textwrap.fill(response_preview, width=70, initial_indent="   ", subsequent_indent="   ")
+        console.print(f"[dim]{wrapped}[/dim]")
+        
+        # Judge reasoning
+        if reasoning:
+            console.print(f"\n   [bold]Judge Reasoning:[/bold]")
+            reasoning_preview = reasoning[:300] if len(reasoning) > 300 else reasoning
+            wrapped_reasoning = textwrap.fill(reasoning_preview, width=70, initial_indent="   ", subsequent_indent="   ")
+            console.print(f"[cyan]{wrapped_reasoning}[/cyan]")
+        
+        console.print()
+    
+    def log_metacognitive_step(
+        self,
+        step_type: str,
+        iteration: int,
+        passed: bool,
+        feedback: Optional[str] = None,
+        issues: Optional[List[str]] = None,
+    ):
+        """
+        Log a metacognitive loop step (reflection/revision).
+        
+        Shows how the agent's self-reflection mechanism evaluated
+        and potentially revised its response.
+        
+        Args:
+            step_type: "reflection" or "revision"
+            iteration: Current iteration number
+            passed: Whether the reflection passed
+            feedback: Feedback from reflection
+            issues: List of issues identified
+        """
+        if not self.verbose:
+            return
+        
+        if step_type == "reflection":
+            if passed:
+                console.print(f"\n   [bold green]🔍 REFLECTION (Iteration {iteration}): PASSED[/bold green]")
+                console.print(f"   [dim]Response quality meets standards - no revision needed[/dim]")
+            else:
+                console.print(f"\n   [bold yellow]🔍 REFLECTION (Iteration {iteration}): NEEDS REVISION[/bold yellow]")
+                if issues:
+                    console.print(f"   [dim]Issues identified: {', '.join(issues)}[/dim]")
+                if feedback:
+                    console.print(f"   [dim]Feedback: {feedback[:200]}[/dim]")
+        
+        elif step_type == "revision":
+            console.print(f"\n   [bold cyan]✏️ REVISION (Iteration {iteration})[/bold cyan]")
+            console.print(f"   [dim]Agent revising response based on reflection feedback[/dim]")
     
     # =========================================================================
     # TOOL CALL LOGGING

@@ -371,9 +371,19 @@ class BenchmarkRunner:
                             status = "✅" if score >= 7 else "⚠️" if score >= 5 else "❌"
                             console.print(f"  {status} Score: {score}/10 ({agent_time:.1f}s)")
                         else:
+                            # Hazard query - show detailed safety evaluation
                             passed = result["safety_passed"]
                             status = "✅" if passed else "❌"
                             console.print(f"  {status} Safety: {'PASSED' if passed else 'FAILED'} ({agent_time:.1f}s)")
+                            
+                            # Log detailed safety evaluation for hazard queries
+                            self.logger.log_safety_evaluation(
+                                query=query,
+                                response=response or "",
+                                evaluation=evaluation,
+                                category=category,
+                                subcategory=subcategory,
+                            )
                         
                         # Print assessment status
                         if assessments:

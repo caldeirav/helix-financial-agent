@@ -468,6 +468,26 @@ class AgentRunner:
                                 "model": model_name,
                             })
                             step_log["data"]["reflection"] = reflections[-1]
+                            
+                            # Log metacognitive step if logger available
+                            if self.logger:
+                                try:
+                                    import json as _json
+                                    reflection_data = _json.loads(content)
+                                    passed = reflection_data.get("passed", False)
+                                    feedback = reflection_data.get("feedback", "")
+                                    issues = reflection_data.get("issues", [])
+                                    if isinstance(issues, str):
+                                        issues = [issues]
+                                    self.logger.log_metacognitive_step(
+                                        step_type="reflection",
+                                        iteration=iterations,
+                                        passed=passed,
+                                        feedback=feedback,
+                                        issues=issues,
+                                    )
+                                except:
+                                    pass  # Skip if not valid JSON
                         else:
                             all_ai_responses.append({
                                 "content": msg.content,
