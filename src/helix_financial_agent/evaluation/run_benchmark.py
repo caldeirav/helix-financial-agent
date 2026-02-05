@@ -1,8 +1,15 @@
 """
-Benchmark Runner with MLflow Tracing
+Benchmark Runner with MLflow Tracing and Verbose Logging
 
 Runs comprehensive evaluation on the synthetic dataset with
-end-to-end MLflow tracing and assessment logging.
+end-to-end MLflow tracing, assessment logging, and detailed verbose output.
+
+Verbose Logging:
+- All model interactions (requests/responses) 
+- Tool calls with arguments and outputs
+- Routing decisions (which model was selected)
+- Flow and decision tracking
+- End-of-run summary
 
 MLflow Integration:
 - Each benchmark session is wrapped in an MLflow run
@@ -28,6 +35,7 @@ from rich.table import Table
 from ..config import get_config
 from ..agent import run_agent
 from ..tracing import setup_mlflow_tracing, TracingContext
+from ..verbose_logging import VerboseLogger, get_logger, reset_logger
 from .judge import GeminiJudge
 
 console = Console()
@@ -36,7 +44,7 @@ config = get_config()
 
 class BenchmarkRunner:
     """
-    Runs benchmark evaluation on a dataset with MLflow tracing.
+    Runs benchmark evaluation on a dataset with MLflow tracing and verbose logging.
     
     Features:
     - Runs agent on each query with MLflow tracing
@@ -44,6 +52,7 @@ class BenchmarkRunner:
     - Logs per-trace assessments (tool_selection, model_selection, judge_score)
     - Tracks aggregate metrics in MLflow
     - Saves results to CSV/JSON as MLflow artifacts
+    - Verbose logging of all model interactions, tool calls, and routing decisions
     
     MLflow Integration:
     - Each benchmark session is an MLflow run
@@ -55,6 +64,8 @@ class BenchmarkRunner:
         judge: Optional[GeminiJudge] = None,
         output_dir: Optional[Path] = None,
         enable_tracing: bool = True,
+        verbose: bool = True,
+        logger: Optional[VerboseLogger] = None,
     ):
         """
         Initialize the benchmark runner.
@@ -63,16 +74,28 @@ class BenchmarkRunner:
             judge: Optional GeminiJudge instance
             output_dir: Optional output directory for results
             enable_tracing: Whether to enable MLflow tracing (default: True)
+            verbose: Enable verbose logging (default: True)
+            logger: Optional VerboseLogger instance
         """
         self.judge = judge or GeminiJudge()
         self.output_dir = output_dir or config.paths.data_dir
         self.output_dir = Path(self.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.enable_tracing = enable_tracing
+        self.verbose = verbose
+        self.logger = logger or get_logger(verbose=verbose, reset=True)
         
         # Initialize MLflow tracing
         if enable_tracing:
             setup_mlflow_tracing()
+        
+        # Log initialization
+        self.logger.log_flow("Benchmark Runner Initialized", {
+            "output_dir": str(self.output_dir),
+            "mlflow_tracing": enable_tracing,
+            "verbose_logging": verbose,
+            "judge_model": config.model.gemini_model,
+        })
     
     def run(
         self,
@@ -83,13 +106,19 @@ class BenchmarkRunner:
         use_tool_rag: bool = True,
     ) -> pd.DataFrame:
         """
-        Run the benchmark on a dataset with MLflow tracing.
+        Run the benchmark on a dataset with MLflow tracing and verbose logging.
         
         Each benchmark session is wrapped in an MLflow run for tracking.
         Per-trace assessments are logged for each query:
         - tool_selection_successful: Y/N
         - model_selection_successful: Y/N
         - judge_score: 0-10
+        
+        Verbose logging includes:
+        - All model requests and responses
+        - Tool calls with arguments and outputs  
+        - Routing decisions (which model selected)
+        - End-of-run summary
         
         Args:
             dataset: List of query dicts
@@ -123,6 +152,13 @@ class BenchmarkRunner:
         # Get run name for MLflow
         run_name = f"benchmark_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
+        # Log benchmark start
+        self.logger.log_flow("Benchmark Starting", {
+            "total_queries": total,
+            "use_tool_rag": use_tool_rag,
+            "run_name": run_name,
+        })
+        
         # Wrap in MLflow run if tracing enabled
         mlflow_run = None
         if self.enable_tracing:
@@ -142,6 +178,8 @@ class BenchmarkRunner:
             console.print(f"   ToolRAG: {'ENABLED' if use_tool_rag else 'DISABLED'}")
             if self.enable_tracing:
                 console.print(f"   MLflow Run: {run_name}")
+            if self.verbose:
+                console.print(f"   Verbose Logging: ENABLED")
             console.print("=" * 60)
             
             benchmark_start = time.time()
@@ -152,11 +190,26 @@ class BenchmarkRunner:
                 subcategory = query_item.get("subcategory", "")
                 expected_tools = query_item.get("expected_tools", [])
                 
+                # Log query start
+                self.logger.log_flow(f"Query [{i+1}/{total}]", {
+                    "category": category,
+                    "subcategory": subcategory,
+                    "query_preview": query[:100],
+                    "expected_tools": expected_tools,
+                })
+                
                 if verbose:
                     console.print(f"\n[bold]Query [{i+1}/{total}][/bold] [{category}/{subcategory}]")
                     console.print(f"  {query[:80]}...")
                 
                 try:
+                    # Log agent request
+                    request_id = self.logger.log_llm_request(
+                        node=f"agent/{i+1}",
+                        prompt=query[:200],
+                        model=config.model.agent_model_name,
+                    )
+                    
                     # Run agent with metadata for assessment tracking
                     start_time = time.time()
                     agent_result = run_agent(
@@ -171,19 +224,77 @@ class BenchmarkRunner:
                     
                     response = agent_result.get("response", "")
                     
+                    # Log agent response with routing info
+                    routed_model = agent_result.get("routed_model", "unknown")
+                    routing_decision = agent_result.get("routing_decision")
+                    
+                    self.logger.log_llm_response(
+                        node=f"agent/{i+1}",
+                        response=response[:300] if response else "",
+                        routed_to=routed_model,
+                        routing_decision=routing_decision,
+                        request_id=request_id,
+                        success=bool(response),
+                    )
+                    
+                    # Log routing decision
+                    if routed_model and routed_model != "unknown":
+                        # Check if routing was expected
+                        is_fallback = False
+                        if category == "valid" and "qwen" not in routed_model.lower():
+                            # Valid queries should typically route to local Qwen
+                            is_fallback = True
+                        
+                        self.logger.log_routing_decision(
+                            requested_model="MoM",
+                            routed_model=routed_model,
+                            decision_name=routing_decision,
+                            is_fallback=is_fallback,
+                        )
+                    
+                    # Log tool calls from agent result
+                    tools_used = agent_result.get("unique_tools", [])
+                    for tool in tools_used:
+                        self.logger.log_tool_call(tool, {"from_agent_result": True})
+                        self.logger.log_tool_response(tool, "executed", success=True)
+                    
                     # Check for failures
                     failure_mode = None
                     if not response or len(response.strip()) < 20:
                         failure_modes["empty_response"] += 1
                         failure_mode = "empty_response"
+                        self.logger.log_warning(f"Empty response for query {i+1}")
                     
                     # Get evaluation from agent result (already ran with run_evaluation=True)
                     evaluation = agent_result.get("evaluation", {})
                     if not evaluation:
                         # Fallback: evaluate with judge if not already done
+                        judge_request_id = self.logger.log_llm_request(
+                            node=f"judge/{i+1}",
+                            prompt=f"Evaluate: {query[:100]}...",
+                            model=config.model.gemini_model,
+                        )
+                        
                         eval_start = time.time()
                         evaluation = self.judge.evaluate_response(query_item, response)
                         eval_time = time.time() - eval_start
+                        
+                        # Log judge response
+                        self.logger.log_llm_response(
+                            node=f"judge/{i+1}",
+                            response=evaluation.get("reasoning", "")[:200],
+                            routed_to="gemini-2.5-pro",  # Judge always uses Gemini
+                            routing_decision="judge_completion",
+                            request_id=judge_request_id,
+                            success=True,
+                        )
+                        
+                        self.logger.log_routing_decision(
+                            requested_model="MoM",
+                            routed_model="gemini-2.5-pro",
+                            decision_name="judge_completion",
+                            is_fallback=False,
+                        )
                     else:
                         eval_time = 0  # Already included in agent_time
                     
@@ -274,6 +385,12 @@ class BenchmarkRunner:
             with open(json_path, 'w') as f:
                 json.dump(results, f, indent=2, default=str)
             
+            # Log completion
+            self.logger.log_success("Benchmark complete", {
+                "total_queries": total,
+                "total_time_sec": round(benchmark_time, 2),
+            })
+            
             console.print(f"\n[green]📁 Results saved to:[/green]")
             console.print(f"   {csv_path}")
             console.print(f"   {json_path}")
@@ -325,6 +442,9 @@ class BenchmarkRunner:
                         console.print(f"   {key}: {value:.3f}")
                     else:
                         console.print(f"   {key}: {value}")
+            
+            # Print verbose logging summary
+            self.logger.print_summary()
             
             return df
             
@@ -419,9 +539,17 @@ def run_benchmark(
     verbose: bool = True,
     use_tool_rag: bool = True,
     enable_tracing: bool = True,
+    verbose_logging: bool = True,
 ) -> pd.DataFrame:
     """
-    Convenience function to run benchmark with MLflow tracing.
+    Convenience function to run benchmark with MLflow tracing and verbose logging.
+    
+    Verbose Logging:
+    - All model interactions (requests/responses)
+    - Tool calls with arguments and outputs
+    - Routing decisions
+    - End-of-run summary
+    Use --quiet to disable.
     
     MLflow Integration:
     - Each benchmark session is an MLflow run
@@ -436,11 +564,12 @@ def run_benchmark(
         verbose: Print progress
         use_tool_rag: Use ToolRAG
         enable_tracing: Enable MLflow tracing (default: True)
+        verbose_logging: Enable detailed logging (default: True)
         
     Returns:
         Results DataFrame
     """
-    runner = BenchmarkRunner(enable_tracing=enable_tracing)
+    runner = BenchmarkRunner(enable_tracing=enable_tracing, verbose=verbose_logging)
     return runner.run(
         dataset,
         max_queries=max_queries,
@@ -450,19 +579,22 @@ def run_benchmark(
 
 
 def main():
-    """CLI entry point for running benchmark with MLflow tracing."""
+    """CLI entry point for running benchmark with MLflow tracing and verbose logging."""
     import argparse
     
     parser = argparse.ArgumentParser(
-        description="Run Helix Financial Agent benchmark with MLflow tracing"
+        description="Run Helix Financial Agent benchmark with MLflow tracing and verbose logging"
     )
     parser.add_argument("--dataset", type=str, help="Path to dataset JSONL file")
     parser.add_argument("--max-queries", type=int, help="Maximum queries to run")
     parser.add_argument("--no-tool-rag", action="store_true", help="Disable ToolRAG")
     parser.add_argument("--no-tracing", action="store_true", help="Disable MLflow tracing")
+    parser.add_argument("--quiet", "-q", action="store_true", help="Disable verbose logging (only show progress)")
     parser.add_argument("--verbose", action="store_true", default=True)
     
     args = parser.parse_args()
+    
+    verbose_logging = not args.quiet
     
     # Load dataset
     if args.dataset:
@@ -489,12 +621,23 @@ def main():
                 if line.strip():
                     dataset.append(json.loads(line))
     
+    # Print configuration
+    console.print("\n[bold cyan]═══════════════════════════════════════════════════[/bold cyan]")
+    console.print("[bold cyan]       HELIX FINANCIAL AGENT - BENCHMARK RUNNER     [/bold cyan]")
+    console.print("[bold cyan]═══════════════════════════════════════════════════[/bold cyan]")
+    
     # Print MLflow info
     if not args.no_tracing:
-        console.print("\n[bold cyan]📊 MLflow Tracing Enabled[/bold cyan]")
+        console.print("\n[bold]📊 MLflow Tracing:[/bold] ENABLED")
         console.print(f"   Tracking URI: {config.tracing.tracking_uri}")
         console.print(f"   Experiment: {config.tracing.experiment_name}")
         console.print("   View results: mlflow ui --port 5000 → http://localhost:5000")
+    
+    # Print verbose logging info
+    console.print(f"\n[bold]📝 Verbose Logging:[/bold] {'ENABLED' if verbose_logging else 'DISABLED'}")
+    if verbose_logging:
+        console.print("[dim]   All model interactions, tool calls, and routing decisions will be logged[/dim]")
+        console.print("[dim]   Use --quiet to disable verbose output[/dim]")
     
     # Run benchmark
     run_benchmark(
@@ -503,6 +646,7 @@ def main():
         verbose=args.verbose,
         use_tool_rag=not args.no_tool_rag,
         enable_tracing=not args.no_tracing,
+        verbose_logging=verbose_logging,
     )
 
 

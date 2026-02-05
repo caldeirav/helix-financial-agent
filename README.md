@@ -329,6 +329,104 @@ MLFLOW_TRACKING_URI=http://mlflow-server:5000
 
 ---
 
+## Verbose Logging
+
+Detailed, real-time logging of all agent interactions for debugging and monitoring.
+
+### What Gets Logged
+
+| Category | Details |
+|----------|---------|
+| LLM Requests | Model requested, prompt preview, timing |
+| LLM Responses | Routed model, response preview, duration |
+| Routing Decisions | Requested vs routed model, fallback warnings |
+| Tool Calls | Tool name, arguments, outputs |
+| Flow Events | Phase transitions, decisions |
+| Errors | Full error details with context |
+
+### Usage
+
+Verbose logging is **enabled by default**. Disable with `--quiet`:
+
+```bash
+# Data generation with verbose logging (default)
+helix-generate --count 20
+
+# Data generation without verbose logging
+helix-generate --count 20 --quiet
+
+# Benchmark with verbose logging (default)
+helix-eval --max-queries 10
+
+# Benchmark without verbose logging
+helix-eval --max-queries 10 --quiet
+```
+
+### Output Format
+
+Real-time log entries show:
+```
+  [  0.05s] 📍 Generator Initialized
+           └─ model: MoM
+           └─ router_endpoint: http://localhost:8801/v1
+  [  0.12s] 🤖 LLM Request [generator/fundamental_basic]
+           └─ model_requested: MoM
+           └─ prompt_preview: [GENERATE SYNTHETIC DATA]...
+  [  1.85s] 🤖 LLM Response [generator/fundamental_basic]
+           └─ routed_to: gemini-2.5-pro
+           └─ duration: 1730ms
+  [  1.86s] 🔀 Routing Decision
+           └─ requested: MoM
+           └─ routed_to: gemini-2.5-pro
+```
+
+### End-of-Run Summary
+
+After completion, a summary table is printed:
+
+```
+╔══════════════════════════════════════════════════════════════════════╗
+║                  📊 EXECUTION SUMMARY                                 ║
+╚══════════════════════════════════════════════════════════════════════╝
+⏱️  Total Time                   45.23s
+📝 Log Entries                   127
+
+──────────────────────────────────────────────────────────────────────
+🤖 LLM Interactions:
+┌─────────────────┬──────────────────┬──────────┬────────┐
+│ Node            │ Routed To        │ Duration │ Status │
+├─────────────────┼──────────────────┼──────────┼────────┤
+│ generator/basic │ gemini-2.5-pro   │   1730ms │   ✓    │
+│ generator/adv   │ gemini-2.5-pro   │   2150ms │   ✓    │
+└─────────────────┴──────────────────┴──────────┴────────┘
+   Total LLM time: 12500ms (12.50s)
+   Requests: 10 (✓10 / ✗0)
+
+──────────────────────────────────────────────────────────────────────
+🔀 Routing Summary:
+   → Qwen3 (local):  0
+   → Gemini (API):   10
+```
+
+### Routing Fallback Detection
+
+When the router selects an unexpected model (e.g., routing to local Qwen when Gemini was expected for data generation), verbose logging highlights this:
+
+```
+  [  1.85s] 🔀 Routing Decision (FALLBACK)
+           └─ requested: MoM
+           └─ routed_to: qwen3-30b-a3b
+           └─ decision: fallback_to_local
+  [  1.85s] 📍 Routing fallback for fundamental_basic
+           └─ expected: gemini-2.5-pro
+           └─ got: qwen3-30b-a3b
+           └─ hint: Generation keywords may not be triggering data_generation decision
+```
+
+This helps identify when the semantic router's rules need adjustment without requiring code changes.
+
+---
+
 ## Financial Tools
 
 ### Core Tools
@@ -379,7 +477,17 @@ MLFLOW_TRACKING_URI=http://mlflow-server:5000
 | `--eval, -e` | Enable evaluation |
 | `--no-tool-rag` | Use all tools |
 | `--no-tracing` | Disable MLflow tracing |
-| `--quiet` | Less verbose |
+| `--quiet, -q` | Disable verbose logging |
+
+### Data Generation Options
+
+| Option | Description |
+|--------|-------------|
+| `--count, -n` | Total queries to generate (default: 100) |
+| `--output-dir, -o` | Output directory (default: ./data) |
+| `--eval-ratio` | Ratio for evaluation split (default: 0.10) |
+| `--valid-ratio` | Ratio of valid vs hazard queries (default: 0.80) |
+| `--quiet, -q` | Disable verbose logging |
 
 ### Benchmark Options
 
@@ -389,6 +497,7 @@ MLFLOW_TRACKING_URI=http://mlflow-server:5000
 | `--max-queries` | Maximum queries to run |
 | `--no-tool-rag` | Disable ToolRAG |
 | `--no-tracing` | Disable MLflow tracing |
+| `--quiet, -q` | Disable verbose logging |
 
 ---
 

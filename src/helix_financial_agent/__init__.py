@@ -8,6 +8,7 @@ Features:
 - MCP server deployment via FastMCP
 - Comprehensive evaluation with LLM-as-a-Judge
 - MLflow tracing for end-to-end observability
+- Verbose logging for detailed execution tracking
 
 MLflow Tracing:
     The agent automatically traces all LLM calls, tool executions, and routing
@@ -17,6 +18,10 @@ MLflow Tracing:
     - judge_score: 0-10
     
     View traces at http://localhost:5000 after running: mlflow ui --port 5000
+
+Verbose Logging:
+    Detailed logging of all model interactions, tool calls, and routing decisions.
+    Enabled by default, disable with --quiet flag.
 """
 
 __version__ = "0.1.0"
@@ -26,4 +31,11 @@ from .tracing import (
     setup_mlflow_tracing,
     log_run_assessments,
     TracingContext,
+)
+
+# Expose verbose logging utilities
+from .verbose_logging import (
+    VerboseLogger,
+    get_logger,
+    reset_logger,
 )
