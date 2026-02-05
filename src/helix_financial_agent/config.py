@@ -91,7 +91,28 @@ class MCPConfig(BaseModel):
 
 
 class ToolRAGConfig(BaseModel):
-    """Configuration for ToolRAG system."""
+    """
+    Configuration for ToolRAG (Tool Retrieval Augmented Generation) system.
+    
+    ToolRAG dynamically selects relevant tools for each query using semantic
+    similarity search. This keeps the agent focused and prevents context
+    overflow from irrelevant tool schemas.
+    
+    Key Parameters:
+        threshold: Minimum similarity score for tool selection (0.0-1.0).
+            Lower values include more tools, higher values are more selective.
+            Recommended: 0.3-0.4 for good coverage without noise.
+            
+        max_tools: Maximum number of tools to pass to LLM, even if more
+            tools exceed the threshold. This prevents context overflow errors
+            like "request (16454 tokens) exceeds context size (16384 tokens)".
+            
+    Context Size Calculation:
+        Each tool adds ~1000-2000 tokens to the prompt (name, description,
+        parameters schema). With 13 tools and a 16K context model:
+        - 13 tools × ~1500 tokens = ~19,500 tokens (exceeds 16K!)
+        - max_tools=4 → ~6,000 tokens for tools, leaving room for query/response
+    """
     
     embedding_model: str = Field(
         default_factory=lambda: os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
@@ -103,7 +124,8 @@ class ToolRAGConfig(BaseModel):
         default_factory=lambda: float(os.getenv("TOOL_RAG_THRESHOLD", "0.35"))
     )
     max_tools: int = Field(
-        default_factory=lambda: int(os.getenv("TOOL_RAG_MAX_TOOLS", "4"))
+        default_factory=lambda: int(os.getenv("TOOL_RAG_MAX_TOOLS", "4")),
+        description="Maximum tools to select (prevents context overflow with limited context models)"
     )
 
 

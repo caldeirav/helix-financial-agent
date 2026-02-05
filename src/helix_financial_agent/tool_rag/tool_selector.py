@@ -13,7 +13,21 @@ Selection Flow:
     1. User query is embedded via sentence-transformers
     2. Query embedding compared against tool embeddings (ChromaDB)
     3. Tools with similarity >= threshold are selected
-    4. Selected tools (or fallback core tools) are bound to LLM
+    4. Tools are capped to max_tools to prevent context overflow
+    5. Selected tools (or fallback core tools) are bound to LLM
+
+Context Overflow Prevention:
+    The max_tools parameter limits how many tools are passed to the LLM,
+    even if more tools exceed the similarity threshold. This prevents
+    errors like:
+        "request (16454 tokens) exceeds context size (16384 tokens)"
+    
+    Each tool adds ~1000-2000 tokens to the prompt. With max_tools=4,
+    approximately 6000 tokens are used for tools, leaving room for the
+    query, system prompt, and response in a 16K context model.
+    
+    In the output table, tools above threshold but excluded due to
+    max_tools are marked with "~ CAP" status.
 
 Fallback Behavior:
     If no tools meet the similarity threshold, the selector falls
@@ -21,7 +35,10 @@ Fallback Behavior:
 
 Logging:
     Integrates with VerboseLogger for benchmark output.
-    Shows all tools ranked by similarity with selection status.
+    Shows all tools ranked by similarity with selection status:
+    - ✓ SEL: Selected (above threshold, within max_tools limit)
+    - ~ CAP: Capped (above threshold but excluded by max_tools)
+    - ✗ REJ: Rejected (below threshold)
 """
 
 from typing import List, Dict, Any, Optional, Callable, TYPE_CHECKING

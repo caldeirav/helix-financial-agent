@@ -31,13 +31,28 @@ from ..config import get_config
 
 
 def _ensure_hf_token():
-    """Ensure HF_TOKEN is set from config before loading models."""
+    """
+    Ensure HuggingFace token is properly configured before loading models.
+    
+    This function addresses the warning:
+        "Warning: You are sending unauthenticated requests to the HF Hub.
+         Please set a HF_TOKEN to enable higher rate limits and faster downloads."
+    
+    The issue occurs because SentenceTransformer may not automatically pick up
+    the HF_TOKEN from .env. This function:
+    
+    1. Loads HF_TOKEN from .env if not already in environment
+    2. Sets HUGGING_FACE_HUB_TOKEN (the variable sentence-transformers checks)
+    3. Configures HF_HUB_DISABLE_PROGRESS_BARS to reduce noise
+    
+    Called automatically by ToolStore.__init__ before loading the embedding model.
+    """
     # Load from .env if not already set
     if not os.environ.get("HF_TOKEN"):
         from dotenv import load_dotenv
         load_dotenv()
     
-    # Also set HUGGING_FACE_HUB_TOKEN for sentence-transformers
+    # Set HUGGING_FACE_HUB_TOKEN - this is what sentence-transformers checks
     hf_token = os.environ.get("HF_TOKEN")
     if hf_token:
         os.environ["HUGGING_FACE_HUB_TOKEN"] = hf_token
@@ -505,6 +520,20 @@ DEFAULT_TOOL_DEFINITIONS = [
 # =============================================================================
 # SINGLETON TOOL STORE - Caches embedding model and tool embeddings
 # =============================================================================
+#
+# Problem Solved:
+#   During benchmark evaluation, the embedding model was being reloaded for
+#   every query, causing:
+#   - Repeated "Loading weights: 100%|..." messages in output
+#   - Slow benchmark execution (~3s per query just for model loading)
+#   - Unnecessary GPU memory churn
+#
+# Solution:
+#   Singleton pattern caches the ToolStore (and thus the SentenceTransformer
+#   model) after first initialization. Subsequent calls return the cached
+#   instance, eliminating redundant model loads.
+#
+# =============================================================================
 
 _cached_tool_store: Optional[ToolStore] = None
 _cached_persist_directory: Optional[str] = None
@@ -516,7 +545,10 @@ def create_default_tool_store(persist_directory: Optional[str] = None, force_rel
     
     Uses singleton pattern to avoid reloading the embedding model and 
     re-computing tool embeddings on every query. This significantly speeds
-    up benchmark runs.
+    up benchmark runs (from ~3s to ~0.01s per query for tool selection).
+    
+    The first call loads the SentenceTransformer model and computes embeddings
+    for all tools. Subsequent calls return the cached instance immediately.
     
     Args:
         persist_directory: Optional path to persist the database
@@ -524,6 +556,13 @@ def create_default_tool_store(persist_directory: Optional[str] = None, force_rel
         
     Returns:
         Initialized ToolStore with all tools (cached after first call)
+        
+    Example:
+        # First call - loads model and computes embeddings (~3s)
+        store = create_default_tool_store()
+        
+        # Second call - returns cached instance (~0.01s)
+        store = create_default_tool_store()
     """
     global _cached_tool_store, _cached_persist_directory
     

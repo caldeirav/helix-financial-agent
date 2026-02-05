@@ -8,14 +8,25 @@ Verbose Logging:
 - All model interactions (requests/responses) 
 - Tool calls with arguments and outputs
 - Routing decisions (which model was selected)
+- ToolRAG selection tables with similarity scores
 - Flow and decision tracking
 - End-of-run summary
+
+Output Formatting:
+- Full query text is displayed (not truncated) for clarity
+- ToolRAG tables use Rich Table for proper column alignment
+- Service checks are performed once at benchmark start (not per-query)
 
 MLflow Integration:
 - Each benchmark session is wrapped in an MLflow run
 - Per-trace assessments: tool_selection, model_selection, judge_score
 - Aggregate metrics logged: avg_score, success_rate, tool_selection_accuracy
 - Results saved as MLflow artifacts
+
+Performance Optimizations:
+- Service verification happens once at start, not per-query
+- ToolStore singleton caches embedding model (avoids repeated loading)
+- Logger passed to ToolSelector for integrated output
 
 View results at http://localhost:5000 (mlflow ui)
 """

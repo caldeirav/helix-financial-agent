@@ -6,10 +6,28 @@ and flow throughout the agent execution.
 
 Features:
 - Logs all LLM requests and responses
-- Tracks routing decisions (which model was selected)
+- Tracks routing decisions (which model was selected)  
 - Shows tool calls with arguments and outputs
 - Captures timing information
+- ToolRAG selection logging with detailed similarity tables
 - Provides end-of-run summary
+
+ToolRAG Logging:
+    The log_tool_selection() method displays a formatted table showing:
+    - All tools ranked by semantic similarity to the query
+    - Selection status for each tool:
+        ✓ SEL: Selected (above threshold, within max_tools)
+        ~ CAP: Capped (above threshold but excluded by max_tools limit)
+        ✗ REJ: Rejected (below similarity threshold)
+    - Accuracy comparison vs expected tools (for benchmark evaluation)
+
+    This helps debug tool selection issues and understand why certain
+    tools were or weren't selected for a given query.
+
+Output Formatting:
+    - Query and expected_tools fields are NOT truncated (shown in full)
+    - Other long fields are truncated to 100 characters for readability
+    - Tables use Rich Table for proper column alignment
 
 Usage:
     from helix_financial_agent.verbose_logging import VerboseLogger, get_logger
@@ -21,9 +39,16 @@ Usage:
     logger.log_llm_request("generator", prompt, model="MoM")
     logger.log_llm_response("generator", response, routed_to="qwen3-30b-a3b")
 
-    # Log tool call
-    logger.log_tool_call("get_stock_fundamentals", {"ticker": "AAPL"})
-    logger.log_tool_response("get_stock_fundamentals", result)
+    # Log tool selection (from ToolRAG)
+    logger.log_tool_selection(
+        query="What is AAPL's PE ratio?",
+        all_matches=matches,
+        selected=selected,
+        threshold=0.3,
+        expected_tools=["get_stock_fundamentals"],
+        max_tools=4,
+        above_threshold_count=8,
+    )
 
     # Print summary
     logger.print_summary()
