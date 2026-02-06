@@ -224,7 +224,10 @@ class VerboseLogger:
         if entry.details:
             for key, value in entry.details.items():
                 # Don't truncate these important fields - show them in full
-                no_truncate_fields = ("query", "expected_tools", "prompt_preview", "prompt")
+                no_truncate_fields = (
+                    "query", "expected_tools", "prompt_preview", "prompt",
+                    "response_preview", "reasoning", "eval_reasoning"
+                )
                 if isinstance(value, str) and len(value) > 100 and key not in no_truncate_fields:
                     value = self._truncate(value, 100)
                 console.print(f"           └─ {key}: {value}")
@@ -284,7 +287,7 @@ class VerboseLogger:
         start = self._pending_requests.pop(req_id, time.time())
         duration_ms = (time.time() - start) * 1000
         
-        # Extract response text
+        # Extract response text - don't truncate for full visibility
         if hasattr(response, 'content'):
             response_str = response.content
         elif isinstance(response, dict):
@@ -292,7 +295,8 @@ class VerboseLogger:
         else:
             response_str = str(response)
         
-        preview = self._truncate(response_str) if not self.show_full_responses else response_str
+        # Don't truncate response_preview - show full response for debugging
+        preview = response_str
         
         # Update counters
         if success:
@@ -309,13 +313,13 @@ class VerboseLogger:
             else:
                 self.counters["routing_unknown"] += 1
         
-        # Store interaction
+        # Store interaction (internal storage can use shorter previews)
         interaction = LLMInteraction(
             node=node,
             request_model="MoM",
             routed_model=routed_to,
-            prompt_preview=preview[:100],
-            response_preview=preview[:200],
+            prompt_preview=preview[:100] if len(preview) > 100 else preview,
+            response_preview=preview[:500] if len(preview) > 500 else preview,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             duration_ms=duration_ms,
@@ -324,14 +328,14 @@ class VerboseLogger:
         )
         self.llm_interactions.append(interaction)
         
-        # Log
+        # Log with full response_preview
         level = LogLevel.INFO if success else LogLevel.ERROR
-        event = f"LLM Response [{node}]" if success else f"LLM Error [{node}]"
+        event = "LLM Response"
         
         details = {
             "routed_to": routed_to or "unknown",
             "duration": f"{duration_ms:.0f}ms",
-            "response_preview": preview,
+            "response_preview": preview,  # Full response, not truncated
         }
         if routing_decision:
             details["routing_decision"] = routing_decision
@@ -605,20 +609,17 @@ class VerboseLogger:
             disclaimer_icon = "[green]✓[/green]" if disclaimer else "[yellow]○[/yellow]"
             console.print(f"   {disclaimer_icon} Included appropriate disclaimers: {'Yes' if disclaimer else 'No'}")
         
-        # Response preview (show how agent actually responded)
-        console.print(f"\n   [bold]Agent Response Preview:[/bold]")
-        response_preview = response[:400] if response else "(empty)"
-        if len(response) > 400:
-            response_preview += "..."
+        # Full agent response (show how agent actually responded - not truncated)
+        console.print(f"\n   [bold]Agent Response (Full):[/bold]")
+        response_text = response if response else "(empty)"
         # Wrap long lines for readability
-        wrapped = textwrap.fill(response_preview, width=70, initial_indent="   ", subsequent_indent="   ")
+        wrapped = textwrap.fill(response_text, width=70, initial_indent="   ", subsequent_indent="   ")
         console.print(f"[dim]{wrapped}[/dim]")
         
-        # Judge reasoning
+        # Full judge reasoning (not truncated - important for understanding evaluation)
         if reasoning:
-            console.print(f"\n   [bold]Judge Reasoning:[/bold]")
-            reasoning_preview = reasoning[:300] if len(reasoning) > 300 else reasoning
-            wrapped_reasoning = textwrap.fill(reasoning_preview, width=70, initial_indent="   ", subsequent_indent="   ")
+            console.print(f"\n   [bold]Judge Reasoning (Full):[/bold]")
+            wrapped_reasoning = textwrap.fill(reasoning, width=70, initial_indent="   ", subsequent_indent="   ")
             console.print(f"[cyan]{wrapped_reasoning}[/cyan]")
         
         console.print()

@@ -42,8 +42,8 @@ def _ensure_hf_token():
     the HF_TOKEN from .env. This function:
     
     1. Loads HF_TOKEN from .env if not already in environment
-    2. Sets HUGGING_FACE_HUB_TOKEN (the variable sentence-transformers checks)
-    3. Configures HF_HUB_DISABLE_PROGRESS_BARS to reduce noise
+    2. Sets multiple HF token environment variables for compatibility
+    3. Optionally logs in via huggingface_hub for full authentication
     
     Called automatically by ToolStore.__init__ before loading the embedding model.
     """
@@ -52,11 +52,19 @@ def _ensure_hf_token():
         from dotenv import load_dotenv
         load_dotenv()
     
-    # Set HUGGING_FACE_HUB_TOKEN - this is what sentence-transformers checks
     hf_token = os.environ.get("HF_TOKEN")
     if hf_token:
+        # Set all known HuggingFace token environment variables
+        os.environ["HF_TOKEN"] = hf_token
         os.environ["HUGGING_FACE_HUB_TOKEN"] = hf_token
-        os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "0"
+        os.environ["HUGGINGFACE_HUB_TOKEN"] = hf_token
+        
+        # Try to login via huggingface_hub for full authentication
+        try:
+            from huggingface_hub import login
+            login(token=hf_token, add_to_git_credential=False)
+        except Exception:
+            pass  # Login failed, but env vars are set which may be enough
 
 
 @dataclass
