@@ -445,9 +445,22 @@ Score the response and provide detailed feedback on any issues found.
             if "passed" in critique_json:
                 critique_passed = critique_json.get("passed", False)
             elif "score" in critique_json:
-                # JSON with numeric score
-                critique_passed = float(critique_json.get("score", 0)) >= PASSING_SCORE_THRESHOLD
-    except (json.JSONDecodeError, AttributeError, ValueError):
+                raw_score = critique_json.get("score", 0)
+                # LLM may return score as number or as dict (e.g. {"overall": 8, "accuracy": 7})
+                if isinstance(raw_score, (int, float)):
+                    score_val = float(raw_score)
+                elif isinstance(raw_score, dict):
+                    score_val = raw_score.get("overall") or raw_score.get("score")
+                    if score_val is None and raw_score:
+                        for v in raw_score.values():
+                            if isinstance(v, (int, float)):
+                                score_val = float(v)
+                                break
+                    score_val = float(score_val) if score_val is not None else 0.0
+                else:
+                    score_val = 0.0
+                critique_passed = score_val >= PASSING_SCORE_THRESHOLD
+    except (json.JSONDecodeError, AttributeError, ValueError, TypeError):
         pass
     
     # Method 2: If JSON parsing didn't work, look for explicit pass/fail indicators

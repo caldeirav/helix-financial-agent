@@ -40,7 +40,7 @@ from rich.tree import Tree
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from ..config import get_config
-from ..tools import CORE_TOOLS, check_mcp_server, get_mcp_client
+from ..tools import CORE_TOOLS, ALL_TOOLS, check_mcp_server, get_mcp_client
 from ..tool_rag import ToolSelector
 from ..tracing import (
     setup_mlflow_tracing,
@@ -268,8 +268,10 @@ class AgentRunner:
         # Initialize tool selector if using ToolRAG
         if use_tool_rag:
             self.tool_selector = ToolSelector(logger=self.logger)
-            # Register tools
-            for tool in self.all_tools:
+            # Register all tools that can be selected (tool store has core + distraction)
+            # so that any ToolRAG-selected name resolves to a callable
+            tools_to_register = tools if tools is not None else ALL_TOOLS
+            for tool in tools_to_register:
                 # Handle both regular functions and LangChain StructuredTool objects
                 name = getattr(tool, "name", None) or getattr(tool, "__name__", str(tool))
                 self.tool_selector.register_tool(name, tool)
