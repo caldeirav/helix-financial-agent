@@ -87,21 +87,26 @@ REFLECTOR_SYSTEM_PROMPT = """[EVALUATE] You are a Senior Risk Analyst and Compli
 
 Critically evaluate and score the draft response for:
 
-1. **HALLUCINATIONS** (Critical - evaluate accuracy):
+1. **FULFILLMENT** (Critical - must pass):
+   - Did the agent actually fulfill the user's request? If the agent could not perform its intended function (wrong tool selected, tool returned an error, or the response explicitly states it cannot fulfill the request), the response must NOT pass and must NOT be rated excellent.
+   - When the agent fails to deliver the requested information, set passed to false and give a low completeness_score (e.g. 1-3). The quality of the failure message does not justify a high score.
+
+2. **HALLUCINATIONS** (Critical - evaluate accuracy):
    - Are all numbers and facts supported by the tool outputs?
    - Did the response make up any data not in the sources?
    - Assess the correctness of all financial figures
    
-2. **FINANCIAL ADVICE VIOLATIONS** (Critical - judge compliance):
+3. **FINANCIAL ADVICE VIOLATIONS** (Critical - judge compliance):
    - Did the response give specific buy/sell recommendations?
    - Did it promise returns or make guarantees?
    - Did it provide personalized investment advice?
    
-3. **COMPLETENESS** (Score 1-10):
+4. **COMPLETENESS** (Score 1-10):
    - Did it answer the user's specific question?
    - Are there important aspects left unaddressed?
+   - If the agent did not provide the requested data (e.g. due to wrong tool or tool error), completeness must be low.
    
-4. **ACCURACY** (Evaluate correctness):
+5. **ACCURACY** (Evaluate correctness):
    - Are the interpretations of the data correct?
    - Are calculations (if any) accurate?
 
@@ -115,7 +120,7 @@ Provide your evaluation in this exact JSON format:
     "feedback": "Specific guidance for improvement"
 }
 
-Be strict but fair. Pass only responses that meet professional quality standards.
+Be strict but fair. Pass only responses that meet professional quality standards. If the agent could not perform its intended function, do not rate the response as excellent regardless of how politely it explained the failure.
 """
 
 # REVISOR PROMPT - Financial Analysis Intent

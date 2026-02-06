@@ -287,7 +287,7 @@ DEFAULT_TOOL_DEFINITIONS = [
     # Core Tools
     ToolDefinition(
         name="get_stock_fundamentals",
-        description="Retrieves fundamental data for a given stock ticker: PE ratios (trailing and forward), PEG ratio, Price-to-Sales (P/S), Price-to-Book (P/B), market cap, dividend yield, EPS, sector, business summary, and company info. Use for valuation ratios and per-share metrics, not for earnings report dates.",
+        description="Retrieves fundamental data for a given stock ticker: PE ratios (trailing and forward), PEG ratio, Price-to-Sales (P/S), Price-to-Book (P/B), market cap, dividend yield, EPS, sector, business summary, and company info. Also provides upcoming dividend dates: ex-dividend date, payment date, and next dividend. Use for valuation ratios, per-share metrics, and next dividend or ex-dividend date; not for earnings report dates.",
         parameters={"ticker": {"type": "string", "description": "Stock symbol like AAPL, NVDA, MSFT"}},
         category="core",
         keywords=[
@@ -295,7 +295,8 @@ DEFAULT_TOOL_DEFINITIONS = [
             "PEG ratio", "Price-to-Sales", "P/S ratio", "Price-to-Book", "P/B ratio",
             "market cap", "fundamentals", "valuation", "valuation ratio", "dividend yield", "sector", "beta",
             "52-week high", "52-week low", "current price", "stock price", "EPS", "earnings per share",
-            "enterprise value", "book value"
+            "enterprise value", "book value",
+            "ex-dividend date", "ex dividend date", "payment date", "next dividend", "dividend date", "upcoming dividend",
         ],
         use_cases=[
             "What is AAPL's PE ratio?",
@@ -311,6 +312,8 @@ DEFAULT_TOOL_DEFINITIONS = [
             "List the PE ratio and dividend yield",
             "Get key financial ratios for analysis",
             "What are the fundamental metrics?",
+            "What is the ex-dividend date and payment date for the next dividend?",
+            "When is the next dividend payment date for a stock?",
         ],
     ),
     ToolDefinition(
@@ -462,13 +465,13 @@ DEFAULT_TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name="get_dividend_history",
-        description="Retrieves dividend payment history over time: past dividend payments and growth. Use for history of dividends paid, not for current dividend yield (that is a fundamental metric).",
+        description="Retrieves past dividend payment history over time: historical dividends paid and growth. Use only for history of past payments (how much paid in prior years). Not for next dividend date, ex-dividend date, or payment date (use fundamentals for upcoming dividend dates); not for current dividend yield (that is a fundamental metric).",
         parameters={
             "ticker": {"type": "string", "description": "Stock symbol"},
             "years": {"type": "integer", "description": "Years of history"},
         },
         category="distraction",
-        keywords=["dividend history", "dividend payments", "past dividends", "dividend growth", "payment history"],
+        keywords=["dividend history", "past dividend payments", "historical dividends", "dividend growth", "payment history", "how much paid in dividends"],
         use_cases=[
             "Show dividend history for KO",
             "How much has JNJ paid in dividends over the years?",

@@ -68,6 +68,8 @@ Your job is to verify:
 3. Whether the agent's written response accurately reflects those tool outputs (no invented numbers, no wrong dates).
 4. Whether the conclusion follows from the data the agent had.
 
+**FULFILLMENT**: If the agent could not perform its intended function (wrong tool selected, tool returned an error, or the response explicitly states it cannot fulfill the request), total_score must be at most 4. Do not rate a polite failure message as high quality — the agent failed to deliver the requested information.
+
 ORIGINAL QUERY:
 {query}
 
@@ -82,9 +84,11 @@ AGENT RESPONSE:
 
 Evaluate and score on these criteria:
 1. **Accuracy** (0-3): Do the facts and numbers in the response match the TOOL OUTPUTS above? (Do not use your own knowledge; if the agent correctly reported what the tools returned, score high.)
-2. **Completeness** (0-3): Did the agent address the query using the tool data (e.g. all requested tickers/entities covered)?
+2. **Completeness** (0-3): Did the agent address the query using the tool data (e.g. all requested tickers/entities covered)? If the agent did not deliver the requested data, score 0-1.
 3. **Relevance** (0-2): Are the tool calls and response relevant to the query?
 4. **Clarity** (0-2): Is the response clear and well-organized?
+
+If the agent could not fulfill the user's request, set total_score to at most 4 and state this in reasoning.
 
 Provide your evaluation as JSON:
 {{
@@ -100,6 +104,8 @@ Provide your evaluation as JSON:
 # Fallback when no tool_calls/tool_outputs are provided (e.g. no tools used)
 CORRECTNESS_JUDGE_PROMPT_NO_FLOW = """[EVALUATE] You are evaluating a Financial AI Agent's response. You do not have tool-call or tool-output context; evaluate based on completeness, relevance, and clarity only. Do NOT score "accuracy" using your own knowledge or external dates — if you cannot verify facts from context, score accuracy as 1 (neutral).
 
+**FULFILLMENT**: If the response explicitly states the agent could not fulfill the request (e.g. tool error, missing dependency, unable to retrieve), total_score must be at most 4. Do not rate a polite failure as high quality.
+
 QUERY: {query}
 
 AGENT RESPONSE:
@@ -107,9 +113,11 @@ AGENT RESPONSE:
 
 Evaluate and score on these criteria:
 1. **Accuracy** (0-3): Use 1 (neutral) since no tool outputs were provided to verify against.
-2. **Completeness** (0-3): Did it fully answer the question?
+2. **Completeness** (0-3): Did it fully answer the question? If the agent says it could not fulfill the request, score 0-1.
 3. **Relevance** (0-2): Is the information relevant to what was asked?
 4. **Clarity** (0-2): Is the response clear and well-organized?
+
+If the agent could not fulfill the user's request, set total_score to at most 4.
 
 Provide your evaluation as JSON:
 {{

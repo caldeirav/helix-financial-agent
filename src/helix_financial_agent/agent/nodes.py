@@ -418,6 +418,7 @@ DRAFT RESPONSE TO EVALUATE AND CRITIQUE:
 {draft_response}
 
 Please evaluate this draft response for correctness, accuracy, and quality.
+If the agent could not fulfill the user's request (wrong tool, tool error, or response states it cannot fulfill), the score must be low (e.g. below 6) and passed must be false — do not rate a polite failure message as excellent.
 Score the response and provide detailed feedback on any issues found.
 """
     
