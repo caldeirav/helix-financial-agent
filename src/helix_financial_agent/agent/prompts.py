@@ -73,6 +73,10 @@ DO NOT pass multiple tickers in a single call like "AAPL, MSFT" - this will fail
 - Include relevant financial metrics and numbers from tool outputs
 - Provide market context and stock comparisons when appropriate
 - End with a disclaimer: "This is informational only, not financial advice."
+
+## After Using Tools
+- Once you have received tool results, you MUST answer the user in plain text. Do not call the same tool again with the same arguments.
+- If the tool output already contains the answer (e.g. average volume, price), synthesize it into a short, direct reply and stop.
 """
 
 # REFLECTOR PROMPT - Evaluation Intent

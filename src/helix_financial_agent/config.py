@@ -135,9 +135,13 @@ class ToolRAGConfig(BaseModel):
 
 class AgentConfig(BaseModel):
     """Configuration for agent behavior."""
-    
+
     max_iterations: int = Field(
         default_factory=lambda: int(os.getenv("MAX_ITERATIONS", "3"))
+    )
+    max_agent_steps: int = Field(
+        default_factory=lambda: int(os.getenv("MAX_AGENT_STEPS", "80")),
+        description="Maximum graph steps (generator+tools+reflect+revise) per run. Failsafe to prevent infinite tool-call loops.",
     )
 
 

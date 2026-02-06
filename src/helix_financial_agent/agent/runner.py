@@ -403,8 +403,12 @@ class AgentRunner:
         
         # Initialize state
         initial_state = create_initial_state(query, selected_tool_names)
-        agent_config = {"configurable": {"thread_id": thread_id}}
-        
+        max_steps = config.agent.max_agent_steps
+        agent_config = {
+            "configurable": {"thread_id": thread_id},
+            "recursion_limit": max_steps,
+        }
+
         # Track execution
         all_ai_responses = []
         all_tool_calls = []
@@ -413,106 +417,135 @@ class AgentRunner:
         total_steps = 0
         reflections = []
         routed_models = []  # Track which models were used
-        
+        stopped_at_limit = False
+
         if self.verbose:
             console.print("\n" + "─" * 70)
             console.print("[bold magenta]🤖 PHASE 2: AGENT EXECUTION (Generator → Tools → Reflector)[/bold magenta]")
             console.print("─" * 70)
-        
-        # Stream through the graph
-        for step, state in enumerate(agent.stream(initial_state, agent_config)):
-            node_name = list(state.keys())[0]
-            node_state = state[node_name]
-            total_steps += 1
-            
-            # Track iteration count
-            if "iteration_count" in node_state:
-                iterations = node_state["iteration_count"]
-            
-            # Log the step
-            step_log = {
-                "timestamp": time.time(),
-                "event": f"node_{node_name}",
-                "step": step + 1,
-                "data": {}
-            }
-            
-            if self.verbose:
-                self._print_step(step + 1, node_name, node_state)
-            
-            # Process messages
-            if "messages" in node_state:
-                for msg in node_state["messages"]:
-                    if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                        for tc in msg.tool_calls:
-                            all_tool_calls.append({
-                                "name": tc['name'],
-                                "args": tc['args'],
+
+        try:
+            # Stream through the graph (recursion_limit in agent_config caps graph steps)
+            for step, state in enumerate(agent.stream(initial_state, agent_config)):
+                node_name = list(state.keys())[0]
+                node_state = state[node_name]
+                total_steps += 1
+
+                # Failsafe: stop consuming if we hit max steps (in case graph didn't raise)
+                if total_steps >= max_steps:
+                    stopped_at_limit = True
+                    if self.verbose:
+                        console.print(f"\n[yellow]⚠ Max agent steps ({max_steps}) reached; stopping.[/yellow]")
+                    break
+
+                # Track iteration count
+                if "iteration_count" in node_state:
+                    iterations = node_state["iteration_count"]
+
+                # Log the step
+                step_log = {
+                    "timestamp": time.time(),
+                    "event": f"node_{node_name}",
+                    "step": step + 1,
+                    "data": {}
+                }
+
+                if self.verbose:
+                    self._print_step(step + 1, node_name, node_state)
+
+                # Process messages
+                if "messages" in node_state:
+                    for msg in node_state["messages"]:
+                        if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                            for tc in msg.tool_calls:
+                                all_tool_calls.append({
+                                    "name": tc['name'],
+                                    "args": tc['args'],
+                                    "step": step + 1
+                                })
+                                step_log["data"]["tool_calls"] = all_tool_calls[-1]
+
+                        elif isinstance(msg, ToolMessage) or (hasattr(msg, 'name') and msg.name):
+                            tool_name = getattr(msg, 'name', 'unknown')
+                            all_tool_outputs.append({
+                                "tool": tool_name,
+                                "output": msg.content[:500] if len(msg.content) > 500 else msg.content,
                                 "step": step + 1
                             })
-                            step_log["data"]["tool_calls"] = all_tool_calls[-1]
-                    
-                    elif isinstance(msg, ToolMessage) or (hasattr(msg, 'name') and msg.name):
-                        tool_name = getattr(msg, 'name', 'unknown')
-                        all_tool_outputs.append({
-                            "tool": tool_name,
-                            "output": msg.content[:500] if len(msg.content) > 500 else msg.content,
-                            "step": step + 1
-                        })
-                        step_log["data"]["tool_output"] = all_tool_outputs[-1]
-                    
-                    elif isinstance(msg, AIMessage) and msg.content:
-                        # Extract routing metadata from response
-                        response_metadata = getattr(msg, 'response_metadata', {}) or {}
-                        model_name = (
-                            response_metadata.get('model_name') or 
-                            response_metadata.get('model') or
-                            response_metadata.get('routing_metadata', {}).get('selected_model')
-                        )
-                        if model_name:
-                            routed_models.append(model_name)
-                        
-                        if msg.content.startswith("[REFLECTION]"):
-                            content = msg.content.replace("[REFLECTION]: ", "")
-                            reflections.append({
-                                "content": content,
-                                "step": step + 1,
-                                "iteration": iterations,
-                                "model": model_name,
-                            })
-                            step_log["data"]["reflection"] = reflections[-1]
-                            
-                            # Log metacognitive step if logger available
-                            if self.logger:
-                                try:
-                                    import json as _json
-                                    reflection_data = _json.loads(content)
-                                    passed = reflection_data.get("passed", False)
-                                    feedback = reflection_data.get("feedback", "")
-                                    issues = reflection_data.get("issues", [])
-                                    if isinstance(issues, str):
-                                        issues = [issues]
-                                    self.logger.log_metacognitive_step(
-                                        step_type="reflection",
-                                        iteration=iterations,
-                                        passed=passed,
-                                        feedback=feedback,
-                                        issues=issues,
-                                    )
-                                except:
-                                    pass  # Skip if not valid JSON
-                        else:
-                            all_ai_responses.append({
-                                "content": msg.content,
-                                "step": step + 1,
-                                "model": model_name,
-                            })
-                            step_log["data"]["response"] = {"preview": msg.content[:200], "model": model_name}
-            
-            trace_log.append(step_log)
-        
-        # Get final response
+                            step_log["data"]["tool_output"] = all_tool_outputs[-1]
+
+                        elif isinstance(msg, AIMessage) and msg.content:
+                            # Extract routing metadata from response
+                            response_metadata = getattr(msg, 'response_metadata', {}) or {}
+                            model_name = (
+                                response_metadata.get('model_name') or
+                                response_metadata.get('model') or
+                                response_metadata.get('routing_metadata', {}).get('selected_model')
+                            )
+                            if model_name:
+                                routed_models.append(model_name)
+
+                            if msg.content.startswith("[REFLECTION]"):
+                                content = msg.content.replace("[REFLECTION]: ", "")
+                                reflections.append({
+                                    "content": content,
+                                    "step": step + 1,
+                                    "iteration": iterations,
+                                    "model": model_name,
+                                })
+                                step_log["data"]["reflection"] = reflections[-1]
+
+                                # Log metacognitive step if logger available
+                                if self.logger:
+                                    try:
+                                        import json as _json
+                                        reflection_data = _json.loads(content)
+                                        passed = reflection_data.get("passed", False)
+                                        feedback = reflection_data.get("feedback", "")
+                                        issues = reflection_data.get("issues", [])
+                                        if isinstance(issues, str):
+                                            issues = [issues]
+                                        self.logger.log_metacognitive_step(
+                                            step_type="reflection",
+                                            iteration=iterations,
+                                            passed=passed,
+                                            feedback=feedback,
+                                            issues=issues,
+                                        )
+                                    except Exception:
+                                        pass  # Skip if not valid JSON
+                            else:
+                                all_ai_responses.append({
+                                    "content": msg.content,
+                                    "step": step + 1,
+                                    "model": model_name,
+                                })
+                                step_log["data"]["response"] = {"preview": msg.content[:200], "model": model_name}
+
+                trace_log.append(step_log)
+
+        except Exception as e:
+            # LangGraph raises when recursion_limit is hit; treat as stopped-at-limit
+            if "recursion" in type(e).__name__.lower() or "recursion" in str(e).lower():
+                stopped_at_limit = True
+                if self.verbose:
+                    console.print(f"\n[yellow]⚠ Agent step limit reached ({max_steps}); stopping.[/yellow]")
+            else:
+                raise
+
+        # Get final response (or fallback if we stopped at limit without a final answer)
         final_response = all_ai_responses[-1]["content"] if all_ai_responses else None
+        if stopped_at_limit and final_response is None and all_tool_outputs:
+            last_out = all_tool_outputs[-1].get("output", "")
+            preview = (last_out[:300] + "...") if len(last_out) > 300 else last_out
+            final_response = (
+                "Agent stopped: maximum steps reached. The model repeatedly called tools without producing a final answer. "
+                "Last tool result (preview): " + preview
+            )
+        elif stopped_at_limit and final_response is None:
+            final_response = (
+                "Agent stopped: maximum steps reached. Consider rephrasing the query or simplifying the request."
+            )
         elapsed_time = time.time() - start_time
         
         # Determine the primary routed model (most common or last used)
@@ -541,6 +574,7 @@ class AgentRunner:
             "routed_model": routed_model,
             "routed_models": routed_models,  # All models used during execution
             "tool_selection_details": tool_selection_details,
+            "stopped_at_limit": stopped_at_limit,
         }
         
         # Run evaluation if enabled
