@@ -301,14 +301,18 @@ class BenchmarkRunner:
                         )
                         
                         eval_start = time.time()
-                        evaluation = self.judge.evaluate_response(query_item, response)
+                        evaluation = self.judge.evaluate_response(
+                            query_item, response,
+                            tool_calls=agent_result.get("tool_calls"),
+                            tool_outputs=agent_result.get("tool_outputs"),
+                        )
                         eval_time = time.time() - eval_start
                         
                         # Log judge response
                         self.logger.log_llm_response(
                             node=f"judge/{i+1}",
                             response=evaluation.get("reasoning", "")[:200],
-                            routed_to="gemini-2.5-pro",  # Judge always uses Gemini
+                            routed_to=config.model.gemini_model,
                             routing_decision="judge_completion",
                             request_id=judge_request_id,
                             success=True,
@@ -316,7 +320,7 @@ class BenchmarkRunner:
                         
                         self.logger.log_routing_decision(
                             requested_model="MoM",
-                            routed_model="gemini-2.5-pro",
+                            routed_model=config.model.gemini_model,
                             decision_name="judge_completion",
                             is_fallback=False,
                         )

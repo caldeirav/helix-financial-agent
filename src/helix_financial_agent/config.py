@@ -38,12 +38,13 @@ class ModelConfig(BaseModel):
         default_factory=lambda: int(os.getenv("AGENT_MAX_TOKENS", "4096"))
     )
     
-    # Gemini Judge
+    # Gemini Judge (LLM-as-a-Judge evaluation)
     gemini_api_key: Optional[str] = Field(
         default_factory=lambda: os.getenv("GEMINI_API_KEY")
     )
     gemini_model: str = Field(
-        default_factory=lambda: os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
+        default_factory=lambda: os.getenv("GEMINI_MODEL", "gemini-2.5-pro"),
+        description="Judge model: gemini-2.5-pro (best quality), gemini-2.5-flash (faster/cheaper)",
     )
 
 

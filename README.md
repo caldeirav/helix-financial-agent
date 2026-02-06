@@ -12,7 +12,7 @@
 - **Semantic Routing**: Intelligent model selection via vLLM Semantic Router (MoM architecture)
 - **ToolRAG**: Dynamic tool selection - only relevant tools are bound to the LLM
 - **MCP Deployment**: All tools executed via FastMCP (Model Context Protocol)
-- **LLM-as-a-Judge**: Response evaluation using Gemini 2.5 Pro (score >= 8.0 passes)
+- **LLM-as-a-Judge**: Response evaluation using Gemini (configurable via `GEMINI_MODEL`; default `gemini-2.5-pro`; use `gemini-2.5-flash` for faster runs)
 
 ## Architecture
 
@@ -56,7 +56,7 @@ User Query ──► ToolRAG ──► Generator ──► Reflector ◄──�
 |-----------|------------|-------------|
 | Model Serving | llama.cpp + CUDA | GGUF quantized model serving |
 | Agent Model | Qwen3-30B-A3B-Instruct | 30B MoE model (3B active params) |
-| Judge Model | Gemini 2.5 Pro | LLM-as-a-Judge evaluation |
+| Judge Model | Configurable (`GEMINI_MODEL`) | Default: `gemini-2.5-pro`; optional `gemini-2.5-flash` for speed |
 | Orchestration | LangGraph | Stateful graph-based workflow |
 | Market Data | yfinance | Stock fundamentals, prices, news |
 | Tool Serving | FastMCP | Model Context Protocol server |
@@ -94,7 +94,8 @@ nano .env  # Add your API keys
 **Required in `.env`:**
 ```bash
 HF_TOKEN=hf_your_token_here          # https://huggingface.co/settings/tokens
-GEMINI_API_KEY=your_gemini_key_here  # https://aistudio.google.com/app/apikey
+GEMINI_API_KEY=your_gemini_key_here   # https://aistudio.google.com/app/apikey
+# Optional: GEMINI_MODEL=gemini-2.5-pro (default, best quality) or gemini-2.5-flash (faster)
 ```
 
 ### Step 2: Build llama.cpp (if needed)
@@ -198,6 +199,17 @@ ToolRAG selects only relevant tools for each query, keeping the LLM focused and 
 | Threshold | 0.35 | `TOOL_RAG_THRESHOLD` |
 | Embedding Model | all-MiniLM-L6-v2 | `EMBEDDING_MODEL` |
 
+### Judge model
+
+The LLM-as-a-Judge uses Gemini. Set `GEMINI_MODEL` in `.env` to choose the model:
+
+| Value | Use case |
+|-------|----------|
+| `gemini-2.5-pro` (default) | Best quality for evaluation |
+| `gemini-2.5-flash` | Faster and cheaper; good for high-volume runs |
+
+Ensure the same model name is exposed in your semantic router config so evaluation requests are routed to it.
+
 ### Why It Matters
 
 | Aspect | All 13 Tools | Selected Tools |
@@ -216,7 +228,7 @@ The router automatically selects the best model based on request content using `
 
 | Decision | Priority | Triggers | Routes To |
 |----------|----------|----------|-----------|
-| `evaluation` | 15 | evaluate, judge, assess, score | Gemini 2.5 Pro |
+| `evaluation` | 15 | evaluate, judge, assess, score | Gemini (see `GEMINI_MODEL`) |
 | `data_generation` | 15 | generate, synthetic, dataset | Gemini 2.5 Pro |
 | `financial_analysis` | 10 | stock, price, PE ratio, dividend | Qwen3 (llama.cpp) |
 | `general` | 5 | (fallback) | Qwen3 (llama.cpp) |

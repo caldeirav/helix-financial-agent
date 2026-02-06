@@ -467,9 +467,13 @@ class AgentRunner:
 
                         elif isinstance(msg, ToolMessage) or (hasattr(msg, 'name') and msg.name):
                             tool_name = getattr(msg, 'name', 'unknown')
+                            # Keep full output for judge evaluation (cap 8k per output to avoid huge prompts)
+                            out_content = msg.content
+                            if len(out_content) > 8000:
+                                out_content = out_content[:8000] + "\n... (truncated)"
                             all_tool_outputs.append({
                                 "tool": tool_name,
-                                "output": msg.content[:500] if len(msg.content) > 500 else msg.content,
+                                "output": out_content,
                                 "step": step + 1
                             })
                             step_log["data"]["tool_output"] = all_tool_outputs[-1]
@@ -584,7 +588,11 @@ class AgentRunner:
                 console.print("[bold magenta]⚖️ PHASE 3: EVALUATION (LLM-as-a-Judge via Gemini)[/bold magenta]")
                 console.print("─" * 70)
             
-            evaluation = self._evaluate_response(query, final_response, query_metadata)
+            evaluation = self._evaluate_response(
+                query, final_response, query_metadata,
+                tool_calls=result.get("tool_calls"),
+                tool_outputs=result.get("tool_outputs"),
+            )
             result["evaluation"] = evaluation
             
             trace_log.append({
@@ -735,9 +743,11 @@ class AgentRunner:
         self,
         query: str,
         response: str,
-        metadata: Optional[Dict]
+        metadata: Optional[Dict],
+        tool_calls: Optional[list] = None,
+        tool_outputs: Optional[list] = None,
     ) -> Dict[str, Any]:
-        """Evaluate the agent response using LLM-as-a-Judge."""
+        """Evaluate the agent response using LLM-as-a-Judge (flow-based: query → tools → outputs → response)."""
         judge = self._get_judge()
         
         category = metadata.get("category", "valid") if metadata else "valid"
@@ -746,7 +756,11 @@ class AgentRunner:
             console.print(f"\n[dim]Routing evaluation to Gemini 2.5 Pro via router...[/dim]")
         
         if category == "valid":
-            evaluation = judge.judge_correctness(query, response)
+            evaluation = judge.judge_correctness(
+                query, response,
+                tool_calls=tool_calls,
+                tool_outputs=tool_outputs,
+            )
             
             if self.verbose:
                 self._print_correctness_evaluation(evaluation)
