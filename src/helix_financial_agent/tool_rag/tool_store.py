@@ -287,66 +287,58 @@ DEFAULT_TOOL_DEFINITIONS = [
     # Core Tools
     ToolDefinition(
         name="get_stock_fundamentals",
-        description="Retrieves fundamental data for a given stock ticker including PE ratios, PEG ratio, Price-to-Sales (P/S), Price-to-Book (P/B), market cap, dividend yield, EPS, sector, business summary, and company info.",
+        description="Retrieves fundamental data for a given stock ticker: PE ratios (trailing and forward), PEG ratio, Price-to-Sales (P/S), Price-to-Book (P/B), market cap, dividend yield, EPS, sector, business summary, and company info. Use for valuation ratios and per-share metrics, not for earnings report dates.",
         parameters={"ticker": {"type": "string", "description": "Stock symbol like AAPL, NVDA, MSFT"}},
         category="core",
         keywords=[
-            "PE ratio", "P/E", "PEG ratio", "Price-to-Sales", "P/S ratio", "Price-to-Book", "P/B ratio",
-            "market cap", "fundamentals", "valuation", "dividend yield", "sector", "beta", 
+            "PE ratio", "P/E", "price-to-earnings", "forward P/E", "forward PE", "trailing PE", "trailing P/E",
+            "PEG ratio", "Price-to-Sales", "P/S ratio", "Price-to-Book", "P/B ratio",
+            "market cap", "fundamentals", "valuation", "valuation ratio", "dividend yield", "sector", "beta",
             "52-week high", "52-week low", "current price", "stock price", "EPS", "earnings per share",
-            "forward PE", "trailing PE", "enterprise value", "book value"
+            "enterprise value", "book value"
         ],
         use_cases=[
-            # Basic fundamentals
             "What is AAPL's PE ratio?",
-            "Get the market cap of NVDA",
+            "Fetch the forward price-to-earnings ratio for Apple Inc.",
+            "What is the forward P/E for a ticker?",
+            "Get market cap and valuation ratios for NVDA",
             "What sector is MSFT in?",
             "Tell me about GOOGL's dividend yield",
             "What is the current price of TSLA?",
-            # Valuation ratios
             "What is the PEG ratio for WMT?",
             "Show me the Price-to-Sales ratio for AMZN",
-            "Provide a side-by-side of the PEG ratio and Price-to-Sales ratio",
             "What is the P/B ratio?",
             "List the PE ratio and dividend yield",
-            # Comparative queries
-            "Compare valuation metrics for a stock",
             "Get key financial ratios for analysis",
             "What are the fundamental metrics?",
         ],
     ),
     ToolDefinition(
         name="get_historical_prices",
-        description="Fetches historical price data including Open, High, Low, Close, Volume for technical analysis, moving averages, volatility calculations, and performance tracking.",
+        description="Fetches historical price data: Open, High, Low, Close, Volume (OHLCV) over a time period. Use for price history, returns, moving averages, and volatility from past prices. Not for earnings dates or financial statements.",
         parameters={
             "ticker": {"type": "string", "description": "Stock symbol"},
             "period": {"type": "string", "description": "Time period: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, ytd, max"},
         },
         category="core",
         keywords=[
-            "price history", "historical prices", "OHLCV", "returns", "moving average", 
+            "price history", "historical prices", "OHLCV", "returns", "moving average",
             "SMA", "EMA", "50-day", "200-day", "volatility", "performance", "price data",
             "daily prices", "closing price", "open price", "high low", "volume",
             "30-day", "90-day", "standard deviation", "price change", "YTD return"
         ],
         use_cases=[
-            # Returns and performance
             "What's AAPL's YTD return?",
             "Show price history for NVDA",
             "What was TSLA's highest price this month?",
-            # Moving averages - many variations
             "Calculate the 20-day moving average for MSFT",
             "How far apart are the 50-day and 200-day moving averages?",
             "What is the 200-day moving average for AAPL?",
-            "Show the 50-day and 200-day moving average difference",
             "Calculate moving average crossover",
-            # Volatility - many variations
-            "Calculate the 90-day volatility for pharmaceutical stocks",
+            "Calculate the 90-day volatility for a stock",
             "What is the volatility of this stock?",
-            "Calculate and list the volatility for BMY TMO AMGN",
             "Show historical volatility calculation",
             "What is the standard deviation of returns?",
-            # General historical data
             "Show me the historical closing prices",
             "Get daily price data for the last month",
             "What were the prices over the past year?",
@@ -354,43 +346,36 @@ DEFAULT_TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name="get_financial_statements",
-        description="Retrieves balance sheet, income statement, and cash flow statement data for financial analysis including total debt, assets, liabilities, revenue, and cash flows.",
+        description="Retrieves balance sheet, income statement, and cash flow statement from filings (10-K, 10-Q): total debt, assets, liabilities, revenue, net income, cash flows. Use for reported financials and statement line items, not for valuation ratios or earnings report dates.",
         parameters={"ticker": {"type": "string", "description": "Stock symbol"}},
         category="core",
         keywords=[
             "revenue", "income statement", "balance sheet", "cash flow statement", "total debt",
             "total assets", "total liabilities", "EBITDA", "net income", "operating income",
-            "10-K", "10-Q", "quarterly report", "annual report", "financial report",
+            "10-K", "10-Q", "quarterly report", "annual report", "financial report", "filing",
             "free cash flow", "operating cash flow", "long-term debt", "short-term debt",
             "shareholders equity", "retained earnings", "gross profit"
         ],
         use_cases=[
-            # Revenue and income
             "What is AAPL's total revenue?",
             "Get the income statement data",
             "Show quarterly revenue figures",
-            # Debt queries - many variations
             "How much debt does MSFT have?",
-            "Find the total debt for Morgan Stanley",
-            "Can you find the total debt as of their latest financial report?",
+            "Find the total debt for a company",
             "What is the company's long-term debt?",
-            # Cash flow
             "Get GOOGL's cash flow statement",
-            "I need to see the statement of cash flows from their 10-K filing",
             "Show the cash flow statement from the most recent 10-K",
             "What is free cash flow?",
-            # Balance sheet
             "What are NVDA's total assets?",
             "Show me the balance sheet for the latest quarter",
             "What is the company's total liabilities?",
-            # General financial statements
             "Get financial statement data",
             "Show me the latest 10-K financials",
         ],
     ),
     ToolDefinition(
         name="get_company_news",
-        description="Fetches latest news headlines and links for a company to understand recent events and sentiment.",
+        description="Fetches latest news headlines and links for a company: recent events, announcements, press, and sentiment. Use for news and headlines only, not for financial ratios or price data.",
         parameters={"ticker": {"type": "string", "description": "Stock symbol"}},
         category="core",
         keywords=["news", "headlines", "events", "sentiment", "announcements", "press", "media", "articles", "recent news"],
@@ -406,13 +391,13 @@ DEFAULT_TOOL_DEFINITIONS = [
     # Distraction Tools
     ToolDefinition(
         name="get_options_chain",
-        description="Retrieves options chain data including calls and puts for options trading analysis.",
+        description="Retrieves options chain data: calls and puts, strike prices, expiration dates for options trading. Use only for options contracts and derivatives, not for stock price or fundamentals.",
         parameters={
             "ticker": {"type": "string", "description": "Stock symbol"},
             "expiration_date": {"type": "string", "description": "Optional expiration date"},
         },
         category="distraction",
-        keywords=["options", "calls", "puts", "strike price", "expiration", "implied volatility", "open interest"],
+        keywords=["options", "calls", "puts", "strike price", "expiration", "implied volatility", "open interest", "options chain", "derivatives"],
         use_cases=[
             "Show options chain for SPY",
             "What are the available call options for AAPL?",
@@ -421,10 +406,10 @@ DEFAULT_TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name="get_institutional_holders",
-        description="Retrieves institutional ownership data and top institutional holders.",
+        description="Retrieves who holds the stock: institutional ownership and top institutional holders (funds, institutions). Use for ownership and holder names, not for valuation ratios or price.",
         parameters={"ticker": {"type": "string", "description": "Stock symbol"}},
         category="distraction",
-        keywords=["institutional", "ownership", "holders", "funds", "institutions"],
+        keywords=["institutional", "ownership", "holders", "funds", "institutions", "who holds", "institutional ownership"],
         use_cases=[
             "Who are the major institutional holders of AAPL?",
             "What percentage is held by institutions?",
@@ -432,10 +417,10 @@ DEFAULT_TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name="get_insider_transactions",
-        description="Retrieves recent insider trading activity including buys and sells by executives.",
+        description="Retrieves recent insider trading activity: buys and sells by executives and insiders. Use for insider transaction history only, not for analyst views or valuation.",
         parameters={"ticker": {"type": "string", "description": "Stock symbol"}},
         category="distraction",
-        keywords=["insider", "trading", "executives", "buys", "sells", "transactions"],
+        keywords=["insider", "trading", "executives", "buys", "sells", "transactions", "insider buying", "insider selling"],
         use_cases=[
             "Any recent insider trading in TSLA?",
             "Have executives been buying or selling AAPL?",
@@ -443,10 +428,10 @@ DEFAULT_TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name="get_analyst_recommendations",
-        description="Retrieves analyst ratings, recommendations, and price targets from Wall Street.",
+        description="Retrieves analyst opinions: Wall Street ratings, buy/sell recommendations, upgrades, downgrades, and price targets. Use for analyst views only, not for raw P/E or fundamentals from the company.",
         parameters={"ticker": {"type": "string", "description": "Stock symbol"}},
         category="distraction",
-        keywords=["analyst", "ratings", "recommendations", "price target", "upgrade", "downgrade"],
+        keywords=["analyst", "ratings", "recommendations", "price target", "upgrade", "downgrade", "analyst rating", "Wall Street"],
         use_cases=[
             "What do analysts think about NVDA?",
             "Any recent upgrades for AAPL?",
@@ -454,21 +439,22 @@ DEFAULT_TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name="get_earnings_calendar",
-        description="Retrieves earnings calendar and historical earnings data.",
+        description="Retrieves earnings report dates and calendar: when a company reports earnings (announcement date, schedule). Use only for when earnings are reported, not for P/E ratios, EPS values, or valuation metrics.",
         parameters={"ticker": {"type": "string", "description": "Stock symbol"}},
         category="distraction",
-        keywords=["earnings", "EPS", "calendar", "quarterly", "report"],
+        keywords=["earnings date", "earnings report date", "when is earnings", "earnings schedule", "announcement date", "calendar", "quarterly report date"],
         use_cases=[
-            "When is AAPL's next earnings?",
-            "What was MSFT's last quarter EPS?",
+            "When is AAPL's next earnings report?",
+            "When does MSFT report earnings?",
+            "Earnings announcement schedule for a ticker",
         ],
     ),
     ToolDefinition(
         name="get_sustainability_scores",
-        description="Retrieves ESG sustainability scores for environmental, social, and governance analysis.",
+        description="Retrieves ESG sustainability scores: environmental, social, and governance (ESG) metrics. Use for ESG and sustainability only, not for financial ratios or price.",
         parameters={"ticker": {"type": "string", "description": "Stock symbol"}},
         category="distraction",
-        keywords=["ESG", "sustainability", "environmental", "social", "governance", "green"],
+        keywords=["ESG", "sustainability", "environmental", "social", "governance", "green", "ESG score"],
         use_cases=[
             "What's AAPL's ESG score?",
             "Is XOM sustainable?",
@@ -476,28 +462,28 @@ DEFAULT_TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name="get_dividend_history",
-        description="Retrieves dividend payment history and dividend growth analysis.",
+        description="Retrieves dividend payment history over time: past dividend payments and growth. Use for history of dividends paid, not for current dividend yield (that is a fundamental metric).",
         parameters={
             "ticker": {"type": "string", "description": "Stock symbol"},
             "years": {"type": "integer", "description": "Years of history"},
         },
         category="distraction",
-        keywords=["dividend", "history", "payments", "yield", "growth"],
+        keywords=["dividend history", "dividend payments", "past dividends", "dividend growth", "payment history"],
         use_cases=[
             "Show dividend history for KO",
-            "How much has JNJ paid in dividends?",
+            "How much has JNJ paid in dividends over the years?",
         ],
     ),
     ToolDefinition(
         name="calculate_technical_indicators",
-        description="Calculates advanced technical indicators like RSI, MACD, Bollinger Bands, ATR, and other momentum/volatility indicators.",
+        description="Calculates technical indicators from price data: RSI, MACD, Bollinger Bands, ATR, stochastic, and other momentum/volatility indicators. Use for derived indicators only, not for raw fundamentals or valuation ratios.",
         parameters={
             "ticker": {"type": "string", "description": "Stock symbol"},
             "indicators": {"type": "array", "description": "List of indicators"},
         },
         category="distraction",
         keywords=[
-            "RSI", "MACD", "Bollinger Bands", "technical indicators", "momentum", 
+            "RSI", "MACD", "Bollinger Bands", "technical indicators", "momentum",
             "ATR", "average true range", "stochastic", "Williams %R", "CCI",
             "relative strength index", "signal line", "histogram"
         ],
@@ -510,13 +496,13 @@ DEFAULT_TOOL_DEFINITIONS = [
     ),
     ToolDefinition(
         name="compare_sector_performance",
-        description="Compares performance of stocks within a specific sector.",
+        description="Compares performance of multiple stocks within a sector or industry over a period. Use for sector-level or multi-stock comparison only, not for a single stock's fundamentals or price.",
         parameters={
             "sector": {"type": "string", "description": "Sector name"},
             "period": {"type": "string", "description": "Time period"},
         },
         category="distraction",
-        keywords=["sector", "comparison", "performance", "industry"],
+        keywords=["sector", "comparison", "performance", "industry", "sector performance", "compare stocks"],
         use_cases=[
             "How is the tech sector performing?",
             "Compare healthcare stocks",
