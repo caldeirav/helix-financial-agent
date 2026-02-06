@@ -1,6 +1,10 @@
-# Helix Financial Agent
-
-A **Reflexive Financial AI Agent** with semantic routing, dynamic tool selection (ToolRAG), and MCP server deployment.
+<table align="center" bgcolor="white" cellpadding="30" cellspacing="0" style="border-radius: 12px;">
+<tr><td align="center">
+<img src="img/helix-agent-logo.png" alt="Helix Financial Agent Logo" width="180">
+<h1>Helix Financial Agent</h1>
+<p><strong>Reflexive Financial AI Agent</strong> with semantic routing, dynamic tool selection (ToolRAG), and MCP server deployment.</p>
+</td></tr>
+</table>
 
 ## Features
 
