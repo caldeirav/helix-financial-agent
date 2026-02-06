@@ -50,7 +50,7 @@ from ..tracing import (
     evaluate_model_selection,
     is_tracing_enabled,
 )
-from ..verbose_logging import VerboseLogger
+from ..verbose_logging import VerboseLogger, get_logger
 from .state import AgentState, create_initial_state
 from .graph import create_agent
 
@@ -248,7 +248,10 @@ class AgentRunner:
         self.verbose = verbose
         self.run_evaluation = run_evaluation
         self.enable_tracing = enable_tracing
+        # Use a VerboseLogger when verbose and none passed (e.g. interactive/random) so ToolRAG table is shown
         self.logger = logger
+        if logger is None and verbose and use_tool_rag:
+            self.logger = get_logger(verbose=True, reset=True)
         
         # Initialize MLflow tracing
         if enable_tracing:
@@ -264,7 +267,7 @@ class AgentRunner:
         
         # Initialize tool selector if using ToolRAG
         if use_tool_rag:
-            self.tool_selector = ToolSelector(logger=logger)
+            self.tool_selector = ToolSelector(logger=self.logger)
             # Register tools
             for tool in self.all_tools:
                 # Handle both regular functions and LangChain StructuredTool objects

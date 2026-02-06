@@ -3,8 +3,9 @@
 .env.local
 .env.*.local
 
-# Python
+# Python (bytecode cache – do not version)
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
 *.so
