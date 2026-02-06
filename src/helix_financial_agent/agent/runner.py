@@ -376,6 +376,16 @@ class AgentRunner:
         selected_tools = self._select_tools(query, expected_tools=expected_tools)
         selected_tool_names = [getattr(t, "name", None) or getattr(t, "__name__", str(t)) for t in selected_tools]
         
+        # Capture tool selection details for UI (without logging)
+        tool_selection_details = None
+        if self.use_tool_rag and self.tool_selector:
+            try:
+                tool_selection_details = self.tool_selector.get_selection_details(
+                    query, expected_tools=expected_tools
+                )
+            except Exception:
+                pass  # Non-fatal; UI can still show tools_selected names
+        
         trace_log.append({
             "timestamp": time.time(),
             "event": "tools_selected",
@@ -527,6 +537,7 @@ class AgentRunner:
             "trace": trace_log,
             "routed_model": routed_model,
             "routed_models": routed_models,  # All models used during execution
+            "tool_selection_details": tool_selection_details,
         }
         
         # Run evaluation if enabled

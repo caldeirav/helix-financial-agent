@@ -163,7 +163,36 @@ class ToolSelector:
             self._print_selection(query, matches, selected, threshold)
         
         return selected
-    
+
+    def get_selection_details(
+        self,
+        query: str,
+        top_k: Optional[int] = None,
+        threshold: Optional[float] = None,
+        max_tools: Optional[int] = None,
+        show_all_tools: bool = True,
+        expected_tools: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Return tool selection details (all_matches, selected) without logging.
+        Used by UIs (e.g. Streamlit) to display the same table as VerboseLogger.
+        """
+        threshold = threshold or self.threshold
+        max_tools = max_tools or self.max_tools
+        total_tools = len(self.tool_store._tools)
+        search_k = total_tools if show_all_tools else (top_k or self.top_k)
+        matches = self.tool_store.search(query, top_k=search_k)
+        above_threshold = [m for m in matches if m["similarity"] >= threshold]
+        selected = above_threshold[:max_tools] if max_tools else above_threshold
+        return {
+            "all_matches": matches,
+            "selected": selected,
+            "threshold": threshold,
+            "max_tools": max_tools,
+            "above_threshold_count": len(above_threshold),
+            "expected_tools": expected_tools,
+        }
+
     def get_tools_for_query(
         self,
         query: str,

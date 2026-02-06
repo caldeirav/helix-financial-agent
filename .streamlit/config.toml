@@ -1,0 +1,15 @@
+# Helix Financial Agent - Streamlit UI
+# https://docs.streamlit.io/develop/concepts/configuration
+
+[theme]
+primaryColor = "#0891b2"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#262730"
+textColor = "#fafafa"
+font = "sans serif"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

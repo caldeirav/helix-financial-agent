@@ -8,22 +8,47 @@
 # Usage:
 #   ./scripts/ssh_port_forward.sh <user>@<host>
 #
-# Forwards web UI ports:
-#   - Semantic Router Hub UI:  http://localhost:8180 (remote 8080 → local 8180)
-#   - MLflow UI:               http://localhost:5000
+# Local ports are read from .env (see LOCAL_STREAMLIT_PORT, LOCAL_MLFLOW_PORT,
+# LOCAL_ROUTER_HUB_PORT). Defaults apply if .env is missing or variables unset.
 #
-# Note: Uses local port 8180 instead of 8080 to avoid conflicts with
-# Cursor IDE, which uses port 8080 for its internal features.
+# Forwards (remote → local):
+#   - Streamlit Eval & Run UI:  remote 8501 → local LOCAL_STREAMLIT_PORT
+#   - Semantic Router Hub UI:   remote 8080 → local LOCAL_ROUTER_HUB_PORT
+#   - MLflow UI:                remote 5000 → local LOCAL_MLFLOW_PORT
 # =============================================================================
 
 if [ -z "$1" ]; then
     echo "Usage: $0 <user>@<host>"
     echo ""
-    echo "Example: $0 john@my-server.local"
+    echo "Local ports are read from .env (LOCAL_STREAMLIT_PORT, LOCAL_MLFLOW_PORT, LOCAL_ROUTER_HUB_PORT)."
+    echo ""
+    echo "Example: $0 vincent@dgx-spark.local"
     echo ""
     echo "Run this on your LOCAL machine to forward web UI ports."
     exit 1
 fi
+
+# Project root: directory containing this script's parent (scripts/)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ENV_FILE="$PROJECT_ROOT/.env"
+
+if [ -f "$ENV_FILE" ]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "$ENV_FILE"
+    set +a
+fi
+
+# Server ports (where services listen on remote); must match .env on server
+STREAMLIT_PORT="${STREAMLIT_PORT:-8501}"
+MLFLOW_PORT="${MLFLOW_PORT:-5000}"
+ROUTER_HUB_PORT="${ROUTER_HUB_PORT:-8080}"
+
+# Local ports (bind on this machine when forwarding); defaults if not in .env
+LOCAL_STREAMLIT_PORT="${LOCAL_STREAMLIT_PORT:-8501}"
+LOCAL_MLFLOW_PORT="${LOCAL_MLFLOW_PORT:-5000}"
+LOCAL_ROUTER_HUB_PORT="${LOCAL_ROUTER_HUB_PORT:-8180}"
 
 SSH_TARGET="$1"
 
@@ -32,20 +57,23 @@ echo "║     SSH Port Forwarding for Web UIs                            ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
 echo ""
 echo "Connecting to: $SSH_TARGET"
+echo "Ports from: ${ENV_FILE} (defaults if not set)"
 echo ""
 echo "Once connected, access these web interfaces locally:"
 echo ""
-echo "  Semantic Router Hub UI:  http://localhost:8180"
-echo "  MLflow UI:               http://localhost:5000"
+echo "  Streamlit Eval & Run UI:  http://localhost:$LOCAL_STREAMLIT_PORT"
+echo "  Semantic Router Hub UI:   http://localhost:$LOCAL_ROUTER_HUB_PORT"
+echo "  MLflow UI:                http://localhost:$LOCAL_MLFLOW_PORT"
 echo ""
-echo "To start MLflow UI on the server:"
-echo "  mlflow ui --host 0.0.0.0"
+echo "On the server, start services with (ports from .env):"
+echo "  ./scripts/run_streamlit.sh     # Streamlit on port $STREAMLIT_PORT"
+echo "  ./scripts/run_mlflow_ui.sh     # MLflow UI on port $MLFLOW_PORT"
 echo ""
 echo "Press Ctrl+C to close the tunnel."
 echo ""
 
-# Set up SSH tunnel for web UIs
-# Uses local port 8180 for Router Hub to avoid conflict with Cursor IDE (port 8080)
-ssh -L 8180:localhost:8080 \
-    -L 5000:localhost:5000 \
+# Forward: local port -> remote port (both from .env for consistency)
+ssh -L "${LOCAL_STREAMLIT_PORT}:localhost:${STREAMLIT_PORT}" \
+    -L "${LOCAL_ROUTER_HUB_PORT}:localhost:${ROUTER_HUB_PORT}" \
+    -L "${LOCAL_MLFLOW_PORT}:localhost:${MLFLOW_PORT}" \
     -N "$SSH_TARGET"

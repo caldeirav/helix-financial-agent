@@ -71,6 +71,10 @@ class RouterConfig(BaseModel):
     router_metrics_port: int = Field(
         default_factory=lambda: int(os.getenv("ROUTER_METRICS_PORT", "9190"))
     )
+    router_hub_port: int = Field(
+        default_factory=lambda: int(os.getenv("ROUTER_HUB_PORT", "8080")),
+        description="Hub UI dashboard port (used by start script and port forwarding)",
+    )
     router_endpoint: str = Field(
         default_factory=lambda: os.getenv("ROUTER_ENDPOINT", "http://localhost:8801/v1")
     )
@@ -146,6 +150,19 @@ class TracingConfig(BaseModel):
     experiment_name: str = Field(
         default_factory=lambda: os.getenv("MLFLOW_EXPERIMENT_NAME", "helix-financial-agent")
     )
+    mlflow_ui_port: int = Field(
+        default_factory=lambda: int(os.getenv("MLFLOW_PORT", "5000")),
+        description="Port for mlflow ui (used by run script and port forwarding)",
+    )
+
+
+class ServicesPortConfig(BaseModel):
+    """Ports for web UIs (Streamlit, MLflow). Used by run scripts and port forwarding."""
+    
+    streamlit_port: int = Field(
+        default_factory=lambda: int(os.getenv("STREAMLIT_PORT", "8501")),
+        description="Port for Streamlit app",
+    )
 
 
 class PathConfig(BaseModel):
@@ -172,6 +189,7 @@ class Config(BaseModel):
     agent: AgentConfig = Field(default_factory=AgentConfig)
     tracing: TracingConfig = Field(default_factory=TracingConfig)
     paths: PathConfig = Field(default_factory=PathConfig)
+    services: ServicesPortConfig = Field(default_factory=ServicesPortConfig)
 
 
 # Global configuration instance

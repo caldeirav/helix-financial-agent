@@ -147,36 +147,35 @@ helix-agent
 
 ## Service Ports
 
-| Service | Port | Description |
-|---------|------|-------------|
-| llama.cpp | 8081 | Model inference (OpenAI-compatible) |
-| MCP Server | 8000 | FastMCP tool server (streamable-http) |
-| vLLM-SR HTTP | 8801 | Semantic routing entry point |
-| vLLM-SR Classify | 8889 | Health checks, model listing |
-| vLLM-SR Metrics | 9190 | Prometheus metrics |
-| **vLLM-SR Hub UI** | **8080** | **Router dashboard (forward for remote access)** |
-| **MLflow UI** | **5000** | **Experiment tracking (forward for remote access)** |
+All ports are configured in `.env`. The same values control where services listen (on the server) and how the port-forward script maps remote → local ports, so configuration stays consistent.
+
+| Service | Default port | .env variable | Description |
+|---------|--------------|----------------|-------------|
+| llama.cpp | 8081 | (in LLAMA_CPP_BASE_URL) | Model inference (OpenAI-compatible) |
+| MCP Server | 8000 | `MCP_SERVER_PORT` | FastMCP tool server (streamable-http) |
+| vLLM-SR HTTP | 8801 | `ROUTER_HTTP_PORT` | Semantic routing entry point |
+| vLLM-SR Classify | 8889 | `ROUTER_CLASSIFY_PORT` | Health checks, model listing |
+| vLLM-SR Metrics | 9190 | `ROUTER_METRICS_PORT` | Prometheus metrics |
+| vLLM-SR Hub UI | 8080 | `ROUTER_HUB_PORT` | Router dashboard |
+| Streamlit UI | 8501 | `STREAMLIT_PORT` | Eval & Run app |
+| MLflow UI | 5000 | `MLFLOW_PORT` | Experiment tracking |
+
+Port forwarding local bind ports: `LOCAL_STREAMLIT_PORT`, `LOCAL_MLFLOW_PORT`, `LOCAL_ROUTER_HUB_PORT` (defaults 8501, 5000, 8180).
 
 ### Port Forwarding for Web UIs
 
-Run these commands on your **local machine** (laptop/desktop) to access web UIs on the remote server:
+On your **local machine**, run (ports are read from `.env`):
 
 ```bash
-# Forward web UI ports (replace <user>@<host> with your server)
-# Note: Uses local port 8180 to avoid conflicts with Cursor IDE (which uses 8080)
-ssh -L 8180:localhost:8080 \
-    -L 5000:localhost:5000 \
-    <user>@<host>
-
-# Or use the provided script
 ./scripts/ssh_port_forward.sh <user>@<host>
 ```
 
-**After port forwarding, open in your local browser:**
-- Semantic Router Hub UI: http://localhost:8180
-- MLflow UI: http://localhost:5000
+**After port forwarding, open in your local browser** (using the `LOCAL_*` ports from `.env`):
+- Streamlit Eval & Run UI: http://localhost:8501 (or `LOCAL_STREAMLIT_PORT`)
+- Semantic Router Hub UI: http://localhost:8180 (or `LOCAL_ROUTER_HUB_PORT`)
+- MLflow UI: http://localhost:5000 (or `LOCAL_MLFLOW_PORT`)
 
-**Note:** Start MLflow UI on the server first: `mlflow ui --host 0.0.0.0`
+**Note:** Start MLflow UI on the server with `./scripts/run_mlflow_ui.sh` (uses `MLFLOW_PORT` from `.env`).
 
 ---
 
@@ -514,7 +513,7 @@ Tracing is enabled by default. View traces at http://localhost:5000 after starti
 
 ```bash
 # Start MLflow UI
-mlflow ui --port 5000
+mlflow ui --port $MLFLOW_PORT
 
 # Run agent (tracing enabled by default)
 helix-agent -q "What is AAPL's PE ratio?"
@@ -728,6 +727,51 @@ This helps identify when the semantic router's rules need adjustment without req
 | `--no-tool-rag` | Disable ToolRAG |
 | `--no-tracing` | Disable MLflow tracing |
 | `--quiet, -q` | Disable verbose logging |
+
+---
+
+## Streamlit UI
+
+A single-page Streamlit app lets you generate evaluation data, browse the dataset in a table, select a record, and run the agent with evaluation. After each run you can inspect **model routing**, **tool selection** (ToolRAG table), and **metacognition / reflexive loop** (reflection steps).
+
+All ports (where services listen and where the port-forward script binds) are configured in `.env`. Use the same `.env` on the server and on your local machine so forwarding stays consistent with the ports services use.
+
+### Run the UI on the same machine
+
+From the project root (with required services started):
+
+```bash
+./scripts/run_streamlit.sh
+```
+
+This uses `STREAMLIT_PORT` from `.env` (default 8501). Open the URL shown (e.g. http://localhost:8501). Use **Generate evaluation data** to create a dataset, **Refresh from disk** in the Dataset section to load it, select a row, and **Run agent on selected record** to execute and view the three insight panels.
+
+### Run the UI on a remote server (e.g. DGX Spark) and access from your machine
+
+When the app runs on a remote server (DGX Spark, ZGX Nano, etc.), use SSH port forwarding so you can open it in your local browser.
+
+**1. On the remote server** (SSH into it or use its console), start the app:
+
+```bash
+cd /path/to/helix-financial-agent
+./scripts/run_streamlit.sh
+```
+
+Leave this running. The app listens on `STREAMLIT_PORT` from `.env` (default 8501).
+
+**2. On your local machine**, run the port-forwarding script (ensure `.env` has the same server port values, e.g. `STREAMLIT_PORT`, `MLFLOW_PORT`, `ROUTER_HUB_PORT`, so the script forwards to the correct remote ports):
+
+```bash
+./scripts/ssh_port_forward.sh <user>@<host>
+```
+
+- **user@host** — SSH target (e.g. `vincent@dgx-spark.local` or `vincent@192.168.1.50`).
+
+Server ports (`STREAMLIT_PORT`, `MLFLOW_PORT`, `ROUTER_HUB_PORT`) and local bind ports (`LOCAL_STREAMLIT_PORT`, `LOCAL_MLFLOW_PORT`, `LOCAL_ROUTER_HUB_PORT`) are all read from `.env`.
+
+**3. In your browser**, open:
+
+- **http://localhost:8501** (or the port you set as `LOCAL_STREAMLIT_PORT` in `.env`).
 
 ---
 
