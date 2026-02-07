@@ -16,29 +16,17 @@
 
 ## Architecture
 
-```
-                            ┌───────────────────────────────────────┐
-                            │       vLLM SEMANTIC ROUTER            │
-                            │          (model="MoM")                │
-                            │                                       │
-                            │    Qwen3 (llama.cpp)     Gemini 2.5   │
-                            └───────┬───────────────────────┬───────┘
-                                    │                       │
-                         ┌──────────┴──────────┐            │
-                         ▼                     ▼            ▼
-User Query ──► ToolRAG ──► Generator ──► Reflector ◄───── Revisor
-                 │             │             │                 ▲
-                 │             │             │                 │
-                 │             ▼             ▼                 │
-                 │        MCP Server    [Score >= 8?]          │
-                 │             │             │                 │
-                 │             ▼        ┌────┴────┐            │
-                 │         yfinance     ▼         ▼            │
-                 │                   Output    Revise ─────────┘
-                 │                             (max 3)
-                 │
-                 └─► Only selected tools bound to Generator/Revisor
-```
+<p align="center">
+  <img src="img/helix-agent-architecture.png" alt="Helix Agent Architecture" width="800">
+</p>
+
+The system is organized into three layers:
+
+- **Routing layer** — The vLLM Semantic Router (MoM) sits in front of all LLM calls and directs each request to the right model: Qwen3 (llama.cpp) for financial and general tasks, and Gemini for evaluation and data-generation. The agent talks to a single router endpoint; the router chooses the backend.
+
+- **Tooling layer** — ToolRAG and the MCP server provide the agent’s tools. ToolRAG selects a subset of tools per query via semantic search (ChromaDB), and only those tools are bound to the Generator and Revisor. The MCP server (FastMCP) exposes the actual tools (e.g. yfinance-backed market data); all tool execution goes through this layer.
+
+- **Metacognitive layer** — The reflexive loop (Generator → Reflector → Revisor) implements self-correction. The Generator produces an answer using the routing and tooling layers; the Reflector (Gemini, via the router) scores it 0–10; if the score is below 8, the Revisor revises and the Reflector re-evaluates, up to three times. This layer is what makes the agent “reflexive” rather than single-shot.
 
 ### Request Flow
 
@@ -49,6 +37,25 @@ User Query ──► ToolRAG ──► Generator ──► Reflector ◄──�
 | 3 | Agent → Router → Gemini | Evaluate response quality (score 0-10) |
 | 4 | Score >= 8 → Output | Pass threshold, return response |
 | 4 | Score < 8 → Revisor | Revise and re-evaluate (max 3 iterations) |
+
+```
+  Step 1          Step 2                    Step 3                 Step 4
+  ───────         ──────                    ──────                 ──────
+
+User Query ──► ToolRAG ──► Generator ──► Reflector ──► [Score >= 8?]
+                 │            │              │              │
+                 │            │              │         ┌────┴────┐
+                 │            │              │         ▼         ▼
+                 │            │              │      Output    Revisor
+                 │            │              │         │         │
+                 │            │              │         │         │ (max 3)
+                 │            │              ◄─────────┴─────────┘
+                 │            │                    re-evaluate
+                 │            │
+                 │            └── Router → Qwen3 (MCP tools)
+                 │
+                 └── Semantic search; selected tools bound to Generator/Revisor
+```
 
 ## Technology Stack
 
