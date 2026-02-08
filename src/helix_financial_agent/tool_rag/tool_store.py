@@ -515,6 +515,33 @@ DEFAULT_TOOL_DEFINITIONS = [
 
 
 # =============================================================================
+# CANONICAL TOOL NAMES & BENCHMARK EXPECTED TOOLS (single source of truth)
+# =============================================================================
+#
+# Used by data generation to validate/normalize expected_tools and to build
+# prompts. Keeps benchmark eval aligned with tool definitions.
+#
+# =============================================================================
+
+CANONICAL_TOOL_NAMES = [t.name for t in DEFAULT_TOOL_DEFINITIONS]
+
+# Valid subcategory -> expected tool names for benchmark evaluation.
+# Data generation prompts and validation use this; do not duplicate in generate.py.
+EXPECTED_TOOLS_BY_SUBCATEGORY = {
+    "fundamental_basic": ["get_stock_fundamentals"],
+    "fundamental_advanced": ["get_stock_fundamentals"],
+    "technical_basic": ["get_historical_prices"],
+    "technical_advanced": ["get_historical_prices"],
+    "financial_statements": ["get_financial_statements"],
+    "comparative": ["get_stock_fundamentals"],
+    "sector_analysis": ["get_stock_fundamentals"],
+    "news_sentiment": ["get_company_news"],
+    "corporate_actions": ["get_stock_fundamentals"],
+    "portfolio_info": ["get_stock_fundamentals", "get_historical_prices"],
+}
+
+
+# =============================================================================
 # SINGLETON TOOL STORE - Caches embedding model and tool embeddings
 # =============================================================================
 #

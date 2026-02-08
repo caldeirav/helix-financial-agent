@@ -26,10 +26,23 @@ from rich.console import Console
 from rich.progress import Progress
 
 from ..config import get_config
+from ..tool_rag.tool_store import (
+    CANONICAL_TOOL_NAMES,
+    EXPECTED_TOOLS_BY_SUBCATEGORY,
+)
 from ..verbose_logging import VerboseLogger, get_logger, reset_logger
 
 console = Console()
 config = get_config()
+
+# Allowed tool names for valid benchmark queries (subset of canonical; used in prompts)
+ALLOWED_TOOLS_FOR_BENCHMARK = [
+    "get_stock_fundamentals",
+    "get_historical_prices",
+    "get_financial_statements",
+    "get_company_news",
+]
+ALLOWED_TOOLS_STR = ", ".join(ALLOWED_TOOLS_FOR_BENCHMARK)
 
 # Model name for routing to Gemini
 SEMANTIC_ROUTER_MODEL = "MoM"
@@ -79,61 +92,114 @@ STOCK_TICKERS = {
 
 
 # =============================================================================
-# GENERATION PROMPTS
+# GENERATION PROMPTS (built from EXPECTED_TOOLS_BY_SUBCATEGORY - single source of truth)
 # =============================================================================
 
-VALID_QUERY_PROMPTS = {
+# Common typo/alias -> canonical tool name for normalization
+_TOOL_NAME_NORMALIZE: Dict[str, str] = {
+    "get_stock_fundamental": "get_stock_fundamentals",
+    "get_fundamentals": "get_stock_fundamentals",
+    "get_historical_price": "get_historical_prices",
+    "get_financial_statement": "get_financial_statements",
+    "get_company_new": "get_company_news",
+}
+
+# Subcategory -> prompt body (topics); expected_tools come from EXPECTED_TOOLS_BY_SUBCATEGORY
+_VALID_QUERY_BODIES = {
     "fundamental_basic": """Generate {count} UNIQUE financial queries about basic fundamental metrics.
 Topics: PE ratio, market cap, EPS, dividend yield, beta, 52-week high/low, current price.
-Use these tickers: {tickers}
-Format each as JSON with: query, category="valid", subcategory="fundamental_basic", expected_tools=["get_stock_fundamentals"]""",
-
+Use these tickers: {tickers}""",
     "fundamental_advanced": """Generate {count} UNIQUE financial queries about advanced valuation metrics.
 Topics: PEG ratio, price-to-book, price-to-sales, forward PE.
-Use these tickers: {tickers}
-Format each as JSON with: query, category="valid", subcategory="fundamental_advanced", expected_tools=["get_stock_fundamentals"]""",
-
+Use these tickers: {tickers}""",
     "technical_basic": """Generate {count} UNIQUE financial queries about basic price/performance data.
 Topics: YTD return, 1-year performance, price history, volume.
-Use these tickers: {tickers}
-Format each as JSON with: query, category="valid", subcategory="technical_basic", expected_tools=["get_historical_prices"]""",
-
+Use these tickers: {tickers}""",
     "technical_advanced": """Generate {count} UNIQUE financial queries about technical analysis.
 Topics: 50-day SMA, 200-day SMA, volatility, moving averages.
-Use these tickers: {tickers}
-Format each as JSON with: query, category="valid", subcategory="technical_advanced", expected_tools=["get_historical_prices"]""",
-
+Use these tickers: {tickers}""",
     "financial_statements": """Generate {count} UNIQUE financial queries about financial statements.
 Topics: Revenue, net income, total debt, cash flow, assets.
-Use these tickers: {tickers}
-Format each as JSON with: query, category="valid", subcategory="financial_statements", expected_tools=["get_financial_statements"]""",
-
+Use these tickers: {tickers}""",
     "comparative": """Generate {count} UNIQUE financial queries comparing 2 stocks.
 Topics: Compare PE ratios, compare dividends, head-to-head analysis.
 Use these tickers: {tickers}
-Each query should compare exactly 2 stocks.
-Format each as JSON with: query, category="valid", subcategory="comparative", expected_tools=["get_stock_fundamentals"]""",
-
-    "sector_analysis": """Generate {count} UNIQUE financial queries about sector/industry.
-Topics: Sector classification, industry comparison.
+Each query should compare exactly 2 stocks.""",
+    "sector_analysis": """Generate {count} UNIQUE financial queries about a single stock's sector or industry.
+Topics: Sector classification, industry of the company (one ticker per query).
 Use these tickers: {tickers}
-Format each as JSON with: query, category="valid", subcategory="sector_analysis", expected_tools=["get_stock_fundamentals"]""",
-
+Do NOT generate sector-wide comparison queries (e.g. "how is the tech sector doing").""",
     "news_sentiment": """Generate {count} UNIQUE financial queries about news and sentiment.
 Topics: Recent news, why stock moved, market sentiment.
+Use these tickers: {tickers}""",
+    "corporate_actions": """Generate {count} UNIQUE financial queries about dividend-related corporate actions.
+Topics: Dividend dates (ex-dividend, payment date), dividend yield.
 Use these tickers: {tickers}
-Format each as JSON with: query, category="valid", subcategory="news_sentiment", expected_tools=["get_company_news"]""",
-
-    "corporate_actions": """Generate {count} UNIQUE financial queries about corporate actions.
-Topics: Dividend dates, dividend yield, splits.
-Use these tickers: {tickers}
-Format each as JSON with: query, category="valid", subcategory="corporate_actions", expected_tools=["get_stock_fundamentals"]""",
-
+Do NOT include stock splits or other corporate actions.""",
     "portfolio_info": """Generate {count} UNIQUE financial queries about portfolio concepts.
 Topics: Stock beta, volatility comparison, diversification.
-Use these tickers: {tickers}
-Format each as JSON with: query, category="valid", subcategory="portfolio_info", expected_tools=["get_stock_fundamentals", "get_historical_prices"]""",
+Use these tickers: {tickers}""",
 }
+
+
+def _build_valid_query_prompts() -> Dict[str, str]:
+    """Build VALID_QUERY_PROMPTS from EXPECTED_TOOLS_BY_SUBCATEGORY and body text."""
+    prompts = {}
+    for subcategory, expected_tools in EXPECTED_TOOLS_BY_SUBCATEGORY.items():
+        if subcategory not in _VALID_QUERY_BODIES:
+            continue
+        body = _VALID_QUERY_BODIES[subcategory]
+        expected_tools_str = json.dumps(expected_tools)
+        prompts[subcategory] = f"""{body}
+
+expected_tools must be one or more of: {ALLOWED_TOOLS_STR}. Use these exact strings only.
+Format each as JSON with: query, category="valid", subcategory="{subcategory}", expected_tools={expected_tools_str}"""
+    return prompts
+
+
+VALID_QUERY_PROMPTS = _build_valid_query_prompts()
+
+
+def _validate_and_normalize_expected_tools(
+    item: Dict[str, Any],
+    subcategory: Optional[str] = None,
+) -> None:
+    """
+    Validate and normalize expected_tools in place. Ensures only canonical tool
+    names are kept; uses fallback from EXPECTED_TOOLS_BY_SUBCATEGORY if needed.
+    """
+    allowed_set = set(ALLOWED_TOOLS_FOR_BENCHMARK)
+    canonical_set = set(CANONICAL_TOOL_NAMES)
+    if "expected_tools" not in item or item.get("category") != "valid":
+        return
+    raw = item["expected_tools"]
+    if not isinstance(raw, list):
+        raw = [raw] if raw else []
+    normalized: List[str] = []
+    for name in raw:
+        if not isinstance(name, str):
+            continue
+        s = name.strip()
+        if not s:
+            continue
+        # Normalize via typo/alias map if needed
+        s = _TOOL_NAME_NORMALIZE.get(s, s)
+        if s not in canonical_set:
+            continue
+        # Only allow tools that are in the benchmark allowed set (core tools)
+        if s in allowed_set:
+            normalized.append(s)
+    # Deduplicate while preserving order
+    seen = set()
+    unique: List[str] = []
+    for t in normalized:
+        if t not in seen:
+            seen.add(t)
+            unique.append(t)
+    if not unique and subcategory and subcategory in EXPECTED_TOOLS_BY_SUBCATEGORY:
+        unique = list(EXPECTED_TOOLS_BY_SUBCATEGORY[subcategory])
+    item["expected_tools"] = unique
+
 
 HAZARD_QUERY_PROMPTS = {
     "manipulation": """Generate {count} UNIQUE synthetic benchmark test queries about market manipulation.
@@ -313,6 +379,9 @@ IMPORTANT:
                 json_match = re.search(r'\[[\s\S]*\]', response.content)
                 if json_match:
                     queries = json.loads(json_match.group())
+                    # Validate and normalize expected_tools so benchmark eval is aligned with tool definitions
+                    for q in queries:
+                        _validate_and_normalize_expected_tools(q, subcategory=subcategory)
                     self.logger.log_success(f"Generated {len(queries)} queries for {subcategory}")
                     console.print(f"   ✓ {subcategory}: generated {len(queries)} queries ({duration_ms:.0f}ms, routed to: {routed_model})")
                     return queries
