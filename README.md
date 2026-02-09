@@ -157,18 +157,25 @@ helix-agent
 
 All ports are configured in `.env`. The same values control where services listen (on the server) and how the port-forward script maps remote → local ports, so configuration stays consistent.
 
+### Router: service vs UI
+
+Per [vLLM Semantic Router docs](https://vllm-semantic-router.com/docs/api/router): the router container exposes **separate** ports for the API and the web UI.
+
+- **Router service** — The API the agent uses: **8801** (Envoy, chat completions) and **8889** (Classification API on the host; container port 8080 for health, `/v1/models`, classify endpoints). This is the endpoint for model queries before they are routed to Qwen3 or Gemini. The agent talks to the router service; you do not port-forward it for normal agent use.
+- **Router UI** — The web dashboard (Hub) for inspecting the semantic router. It runs on a **different** port: **8700** (vLLM-SR `DASHBOARD_PORT`). This is the one to port-forward if you want to open the router dashboard in your local browser.
+
 | Service | Default port | .env variable | Description |
 |---------|--------------|----------------|-------------|
 | llama.cpp | 8081 | (in LLAMA_CPP_BASE_URL) | Model inference (OpenAI-compatible) |
 | MCP Server | 8000 | `MCP_SERVER_PORT` | FastMCP tool server (streamable-http) |
-| vLLM-SR HTTP | 8801 | `ROUTER_HTTP_PORT` | Semantic routing entry point |
-| vLLM-SR Classify | 8889 | `ROUTER_CLASSIFY_PORT` | Health checks, model listing |
+| vLLM-SR HTTP | 8801 | `ROUTER_HTTP_PORT` | Router service: semantic routing entry point (chat completions) |
+| vLLM-SR Classify | 8889 | `ROUTER_CLASSIFY_PORT` | Router service: health, model listing (container port 8080) |
+| vLLM-SR Hub UI | 8700 | (fixed in container) | Router dashboard (web UI); separate from Classify |
 | vLLM-SR Metrics | 9190 | `ROUTER_METRICS_PORT` | Prometheus metrics |
-| vLLM-SR Hub UI | 8080 | `ROUTER_HUB_PORT` | Router dashboard |
 | Streamlit UI | 8501 | `STREAMLIT_PORT` | Eval & Run app |
 | MLflow UI | 5000 | `MLFLOW_PORT` | Experiment tracking |
 
-Port forwarding local bind ports: `LOCAL_STREAMLIT_PORT`, `LOCAL_MLFLOW_PORT`, `LOCAL_ROUTER_HUB_PORT` (defaults 8501, 5000, 8180).
+Port forwarding local bind ports: `LOCAL_STREAMLIT_PORT`, `LOCAL_MLFLOW_PORT`, `LOCAL_ROUTER_HUB_PORT` (defaults 8501, 5000, 8700).
 
 ### Port Forwarding for Web UIs
 
@@ -178,9 +185,11 @@ On your **local machine**, run (ports are read from `.env`):
 ./scripts/ssh_port_forward.sh <user>@<host>
 ```
 
+This forwards the **remote** server ports for Streamlit, Router UI, and MLflow to your **local** `LOCAL_*` ports. By default the same port is used locally as on the server (e.g. Router UI: 8700 → 8700); override in `.env` if you need a different local port.
+
 **After port forwarding, open in your local browser** (using the `LOCAL_*` ports from `.env`):
 - Streamlit Eval & Run UI: http://localhost:8501 (or `LOCAL_STREAMLIT_PORT`)
-- Semantic Router Hub UI: http://localhost:8180 (or `LOCAL_ROUTER_HUB_PORT`)
+- Semantic Router Hub UI: http://localhost:8700 (or `LOCAL_ROUTER_HUB_PORT`) — forwards from server port 8700
 - MLflow UI: http://localhost:5000 (or `LOCAL_MLFLOW_PORT`)
 
 **Note:** Start MLflow UI on the server with `./scripts/run_mlflow_ui.sh` (uses `MLFLOW_PORT` from `.env`).
@@ -286,19 +295,19 @@ The vLLM Semantic Router (vLLM-SR) consists of three main components running ins
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     vLLM-SR Container                               │
 │                                                                     │
-│  ┌──────────────┐    ┌──────────────┐    ┌───────────────────────┐ │
-│  │   Envoy      │───►│   ExtProc    │───►│   Classification      │ │
-│  │   Proxy      │    │   Service    │    │   API (Python)        │ │
-│  │   (8801)     │◄───│   (gRPC)     │◄───│   (8080)              │ │
-│  └──────────────┘    └──────────────┘    └───────────────────────┘ │
+│  ┌──────────────┐    ┌──────────────┐    ┌───────────────────────┐  │
+│  │   Envoy      │───►│   ExtProc    │───►│   Classification      │  │
+│  │   Proxy      │    │   Service    │    │   API (Python)        │  │
+│  │   (8801)     │◄───│   (gRPC)     │◄───│   (8080)              │  │
+│  └──────────────┘    └──────────────┘    └───────────────────────┘  │
 │         │                                         │                 │
 │         │ Routes to:                              │ Downloads:      │
 │         ▼                                         ▼                 │
-│  ┌──────────────┐                    ┌───────────────────────────┐ │
-│  │ Upstream     │                    │   HuggingFace Models      │ │
-│  │ Servers      │                    │   - Embedding models      │ │
-│  │ (Gemini,     │                    │   - Classification models │ │
-│  │  llama.cpp)  │                    └───────────────────────────┘ │
+│  ┌──────────────┐                    ┌───────────────────────────┐  │
+│  │ Upstream     │                    │   HuggingFace Models      │  │
+│  │ Servers      │                    │   - Embedding models      │  │
+│  │ (Gemini,     │                    │   - Classification models │  │
+│  │  llama.cpp)  │                    └───────────────────────────┘  │
 │  └──────────────┘                                                   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -634,7 +643,7 @@ After completion, a summary table is printed:
 
 ```
 ╔══════════════════════════════════════════════════════════════════════╗
-║                  📊 EXECUTION SUMMARY                                 ║
+║                  📊 EXECUTION SUMMARY                                ║
 ╚══════════════════════════════════════════════════════════════════════╝
 ⏱️  Total Time                   45.23s
 📝 Log Entries                   127

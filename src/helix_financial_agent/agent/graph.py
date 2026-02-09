@@ -1,7 +1,10 @@
 """
 Agent Graph Construction
 
-Builds the LangGraph workflow for the Reflexive Financial Agent.
+Builds the LangGraph workflow for the Reflexive Financial Agent. This module
+defines only the graph topology (nodes and edges); it does not configure the
+LLM or call bind_tools. Tool binding is done inside the node implementations
+in nodes.py (generator and revisor nodes call llm.bind_tools(tools) at runtime).
 
 Architecture:
     - All LLM calls go through the vLLM Semantic Router (mandatory)
@@ -141,22 +144,24 @@ def build_reflexive_agent(
         - Router routes to Qwen3 (agent) or Gemini (judge) based on model
         - All tool calls go through MCP server (mandatory)
     
-    Tool Binding:
-        Only the tools passed to this function are bound to the LLM in
-        generator and revisor nodes. ToolRAG selects relevant tools based
-        on the user query, and only those selected tools are passed here.
-        This keeps the agent focused on relevant tools and reduces context size.
-        
-        Flow: Query → ToolRAG → Selected Tools → build_reflexive_agent(tools)
-              → generator.bind_tools(tools) & revisor.bind_tools(tools)
+    Tool binding (where bind_tools is called):
+        This module does not call bind_tools. It only passes the tools list
+        to the node factories (create_generator_node, create_revisor_node).
+        Tool binding happens inside those nodes in nodes.py: each node calls
+        llm.bind_tools(tools) when it runs. The graph layer is responsible
+        only for workflow topology; the node layer is responsible for LLM
+        configuration and tool binding.
+
+        End-to-end flow: Query → ToolRAG → selected tools → build_reflexive_agent(tools)
+        → create_*_node(tools=tools) → (when node runs) llm.bind_tools(tools) in nodes.py.
     
     Args:
-        tools: List of tools to bind to LLM nodes. These should be the
-               tools selected by ToolRAG for the current query.
+        tools: List of tools to pass to generator and revisor node factories.
+               These should be the tools selected by ToolRAG for the current query.
                Falls back to CORE_TOOLS if None.
         
     Returns:
-        Compiled StateGraph with tools bound to generator and revisor nodes
+        StateGraph (uncompiled). Generator and revisor nodes will bind tools at runtime.
     """
     tools = tools or CORE_TOOLS
     

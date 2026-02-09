@@ -12,9 +12,9 @@
 # LOCAL_ROUTER_HUB_PORT). Defaults apply if .env is missing or variables unset.
 #
 # Forwards (remote → local):
-#   - Streamlit Eval & Run UI:  remote 8501 → local LOCAL_STREAMLIT_PORT
-#   - Semantic Router Hub UI:   remote 8080 → local LOCAL_ROUTER_HUB_PORT
-#   - MLflow UI:                remote 5000 → local LOCAL_MLFLOW_PORT
+#   - Streamlit Eval & Run UI:  remote STREAMLIT_PORT (8501) → local LOCAL_STREAMLIT_PORT
+#   - Semantic Router Hub UI:   remote 8700 (vLLM-SR dashboard) → local LOCAL_ROUTER_HUB_PORT
+#   - MLflow UI:                remote MLFLOW_PORT (5000) → local LOCAL_MLFLOW_PORT
 # =============================================================================
 
 if [ -z "$1" ]; then
@@ -41,14 +41,15 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # Server ports (where services listen on remote); must match .env on server
+# Router UI (Hub/dashboard) is on 8700 per vLLM-SR (DASHBOARD_PORT), separate from Classify (8889)
 STREAMLIT_PORT="${STREAMLIT_PORT:-8501}"
 MLFLOW_PORT="${MLFLOW_PORT:-5000}"
-ROUTER_HUB_PORT="${ROUTER_HUB_PORT:-8080}"
+ROUTER_HUB_PORT="${ROUTER_HUB_PORT:-8700}"
 
 # Local ports (bind on this machine when forwarding); defaults if not in .env
 LOCAL_STREAMLIT_PORT="${LOCAL_STREAMLIT_PORT:-8501}"
 LOCAL_MLFLOW_PORT="${LOCAL_MLFLOW_PORT:-5000}"
-LOCAL_ROUTER_HUB_PORT="${LOCAL_ROUTER_HUB_PORT:-8180}"
+LOCAL_ROUTER_HUB_PORT="${LOCAL_ROUTER_HUB_PORT:-8700}"
 
 SSH_TARGET="$1"
 
@@ -73,6 +74,7 @@ echo "Press Ctrl+C to close the tunnel."
 echo ""
 
 # Forward: local port -> remote port (both from .env for consistency)
+# Router UI (dashboard) is on server at 8700
 ssh -L "${LOCAL_STREAMLIT_PORT}:localhost:${STREAMLIT_PORT}" \
     -L "${LOCAL_ROUTER_HUB_PORT}:localhost:${ROUTER_HUB_PORT}" \
     -L "${LOCAL_MLFLOW_PORT}:localhost:${MLFLOW_PORT}" \
