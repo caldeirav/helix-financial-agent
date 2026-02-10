@@ -175,7 +175,7 @@ Per [vLLM Semantic Router docs](https://vllm-semantic-router.com/docs/api/router
 | Streamlit UI | 8501 | `STREAMLIT_PORT` | Eval & Run app |
 | MLflow UI | 5000 | `MLFLOW_PORT` | Experiment tracking |
 
-Port forwarding local bind ports: `LOCAL_STREAMLIT_PORT`, `LOCAL_MLFLOW_PORT`, `LOCAL_ROUTER_HUB_PORT` (defaults 8501, 5000, 8700).
+Port forwarding local bind ports: `LOCAL_STREAMLIT_PORT`, `LOCAL_MLFLOW_PORT`, `LOCAL_ROUTER_HUB_PORT` (defaults 8501, 5001, 8701 to avoid macOS conflicts).
 
 ### Port Forwarding for Web UIs
 
@@ -185,12 +185,12 @@ On your **local machine**, run (ports are read from `.env`):
 ./scripts/ssh_port_forward.sh <user>@<host>
 ```
 
-This forwards the **remote** server ports for Streamlit, Router UI, and MLflow to your **local** `LOCAL_*` ports. By default the same port is used locally as on the server (e.g. Router UI: 8700 → 8700); override in `.env` if you need a different local port.
+This forwards the **remote** server ports for Streamlit, Router UI, and MLflow to your **local** `LOCAL_*` ports. Defaults use 5001 and 8701 locally (to avoid macOS port 5000/8700 conflicts); override in `.env` if needed.
 
 **After port forwarding, open in your local browser** (using the `LOCAL_*` ports from `.env`):
 - Streamlit Eval & Run UI: http://localhost:8501 (or `LOCAL_STREAMLIT_PORT`)
-- Semantic Router Hub UI: http://localhost:8700 (or `LOCAL_ROUTER_HUB_PORT`) — forwards from server port 8700
-- MLflow UI: http://localhost:5000 (or `LOCAL_MLFLOW_PORT`)
+- Semantic Router Hub UI: http://localhost:8701 (or `LOCAL_ROUTER_HUB_PORT`) — forwards from server port 8700
+- MLflow UI: http://localhost:5001 (or `LOCAL_MLFLOW_PORT`) — forwards from server port 5000
 
 **Note:** Start MLflow UI on the server with `./scripts/run_mlflow_ui.sh` (uses `MLFLOW_PORT` from `.env`).
 

@@ -11,10 +11,10 @@
 # Local ports are read from .env (see LOCAL_STREAMLIT_PORT, LOCAL_MLFLOW_PORT,
 # LOCAL_ROUTER_HUB_PORT). Defaults apply if .env is missing or variables unset.
 #
-# Forwards (remote → local):
-#   - Streamlit Eval & Run UI:  remote STREAMLIT_PORT (8501) → local LOCAL_STREAMLIT_PORT
-#   - Semantic Router Hub UI:   remote 8700 (vLLM-SR dashboard) → local LOCAL_ROUTER_HUB_PORT
-#   - MLflow UI:                remote MLFLOW_PORT (5000) → local LOCAL_MLFLOW_PORT
+# Forwards (remote → local). Default local ports avoid macOS conflicts (5000, 8700):
+#   - Streamlit Eval & Run UI:  remote STREAMLIT_PORT (8501) → local LOCAL_STREAMLIT_PORT (8501)
+#   - Semantic Router Hub UI:   remote ROUTER_HUB_PORT (8700) → local LOCAL_ROUTER_HUB_PORT (8701)
+#   - MLflow UI:                remote MLFLOW_PORT (5000) → local LOCAL_MLFLOW_PORT (5001)
 # =============================================================================
 
 if [ -z "$1" ]; then
@@ -47,9 +47,10 @@ MLFLOW_PORT="${MLFLOW_PORT:-5000}"
 ROUTER_HUB_PORT="${ROUTER_HUB_PORT:-8700}"
 
 # Local ports (bind on this machine when forwarding); defaults if not in .env
+# Use 5001/8701 by default to avoid conflicts (macOS: 5000=AirPlay, 8700=often Cursor/IDE)
 LOCAL_STREAMLIT_PORT="${LOCAL_STREAMLIT_PORT:-8501}"
-LOCAL_MLFLOW_PORT="${LOCAL_MLFLOW_PORT:-5000}"
-LOCAL_ROUTER_HUB_PORT="${LOCAL_ROUTER_HUB_PORT:-8700}"
+LOCAL_MLFLOW_PORT="${LOCAL_MLFLOW_PORT:-5001}"
+LOCAL_ROUTER_HUB_PORT="${LOCAL_ROUTER_HUB_PORT:-8701}"
 
 SSH_TARGET="$1"
 
